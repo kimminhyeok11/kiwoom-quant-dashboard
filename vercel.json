@@ -4,12 +4,6 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist/public",
   "regions": ["hkg1"],
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "@vercel/node@3",
-      "maxDuration": 60
-    }
-  },
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.ts" },
     { "handle": "filesystem" },
