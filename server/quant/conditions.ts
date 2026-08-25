@@ -321,6 +321,138 @@ export function evaluateRule(rule: ConditionRule, input: ConditionBarsInput): Co
     const actual = bars.at(-1)?.open; const minPrice = numberConfig("minPrice", 0); const maxPrice = numberConfig("maxPrice", Number.POSITIVE_INFINITY); const matched = actual !== undefined && actual >= minPrice && actual <= maxPrice;
     return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `시가 ${actual?.toLocaleString("ko-KR") ?? "N/A"}원, 허용 범위 ${minPrice.toLocaleString("ko-KR")}~${Number.isFinite(maxPrice) ? maxPrice.toLocaleString("ko-KR") : "∞"}원`, actual, expected: minPrice, comparator: "between" };
   }
+  if (rule.type === "macd_histogram") {
+    const fast = numberConfig("fast", 12);
+    const slow = numberConfig("slow", 26);
+    const signal = numberConfig("signal", 9);
+    const histogram = macdHistogram(bars, fast, slow, signal);
+    const actual = histogram.at(-1) ?? 0;
+    const threshold = numberConfig("threshold", 0);
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `MACD 히스토그램(${fast},${slow},${signal}) ${actual.toFixed(4)} ${comparator} ${threshold}`, actual, expected: threshold, comparator };
+  }
+  if (rule.type === "disparity") {
+    const period = numberConfig("period", 20);
+    const threshold = numberConfig("threshold", 100);
+    const sma = simpleMovingAverage(bars, period);
+    const close = bars.at(-1)?.close ?? 0;
+    const actual = sma && sma > 0 ? (close / sma) * 100 : null;
+    const comparator = comparatorFor(rule);
+    const matched = actual !== null && matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `이격도(${period}) ${actual?.toFixed(2) ?? "N/A"}% ${comparator} ${threshold}%`, actual: actual ?? undefined, expected: threshold, comparator };
+  }
+  if (rule.type === "envelope") {
+    const period = numberConfig("period", 20);
+    const percent = numberConfig("percent", 5);
+    const sma = simpleMovingAverage(bars, period);
+    const close = bars.at(-1)?.close ?? 0;
+    const comparator = comparatorFor(rule);
+    if (sma === null) return { ruleId: rule.id, matched: false, score: 0, detail: `엔벨로프 데이터 부족` };
+    const upper = sma * (1 + percent / 100);
+    const lower = sma * (1 - percent / 100);
+    const actual = close;
+    const expected = comparator === "이하" || comparator === "미만" ? lower : upper;
+    const matched = matchesComparator(actual, expected, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `엔벨로프(${period}, ${percent}%) 종가 ${actual.toFixed(0)} ${comparator} ${expected.toFixed(0)}`, actual, expected, comparator };
+  }
+  if (rule.type === "williams_r") {
+    const period = numberConfig("period", 14);
+    const threshold = numberConfig("threshold", -20);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `Williams %R 데이터 부족` };
+    const window = bars.slice(-period);
+    const highestHigh = Math.max(...window.map(b => b.high));
+    const lowestLow = Math.min(...window.map(b => b.low));
+    const close = window.at(-1)!.close;
+    const actual = highestHigh === lowestLow ? -50 : ((highestHigh - close) / (highestHigh - lowestLow)) * -100;
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `Williams %R(${period}) ${actual.toFixed(2)} ${comparator} ${threshold}`, actual, expected: threshold, comparator };
+  }
+  if (rule.type === "cci") {
+    const period = numberConfig("period", 20);
+    const threshold = numberConfig("threshold", 100);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `CCI 데이터 부족` };
+    const window = bars.slice(-period);
+    const typicalPrices = window.map(b => (b.high + b.low + b.close) / 3);
+    const smaTP = average(typicalPrices);
+    const meanDeviation = average(typicalPrices.map(tp => Math.abs(tp - smaTP)));
+    const latestTP = typicalPrices.at(-1)!;
+    const actual = meanDeviation === 0 ? 0 : (latestTP - smaTP) / (0.015 * meanDeviation);
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `CCI(${period}) ${actual.toFixed(2)} ${comparator} ${threshold}`, actual, expected: threshold, comparator };
+  }
+  if (rule.type === "obv") {
+    const period = numberConfig("period", 20);
+    if (bars.length < period + 1) return { ruleId: rule.id, matched: false, score: 0, detail: `OBV 데이터 부족` };
+    const window = bars.slice(-(period + 1));
+    let obv = 0;
+    for (let i = 1; i < window.length; i++) {
+      if (window[i]!.close > window[i - 1]!.close) obv += window[i]!.volume;
+      else if (window[i]!.close < window[i - 1]!.close) obv -= window[i]!.volume;
+    }
+    // Check OBV trend: compare last half vs first half
+    const halfPeriod = Math.floor(period / 2);
+    const firstHalfBars = bars.slice(-(period + 1), -(halfPeriod + 1));
+    const secondHalfBars = bars.slice(-(halfPeriod + 1));
+    let obvFirst = 0;
+    for (let i = 1; i < firstHalfBars.length; i++) {
+      if (firstHalfBars[i]!.close > firstHalfBars[i - 1]!.close) obvFirst += firstHalfBars[i]!.volume;
+      else if (firstHalfBars[i]!.close < firstHalfBars[i - 1]!.close) obvFirst -= firstHalfBars[i]!.volume;
+    }
+    let obvSecond = 0;
+    for (let i = 1; i < secondHalfBars.length; i++) {
+      if (secondHalfBars[i]!.close > secondHalfBars[i - 1]!.close) obvSecond += secondHalfBars[i]!.volume;
+      else if (secondHalfBars[i]!.close < secondHalfBars[i - 1]!.close) obvSecond -= secondHalfBars[i]!.volume;
+    }
+    const comparator = comparatorFor(rule);
+    // OBV rising if second half OBV > first half OBV
+    const actual = obvSecond;
+    const expected = obvFirst;
+    const matched = matchesComparator(actual, expected, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `OBV(${period}) 후반 ${obvSecond.toLocaleString("ko-KR")} ${comparator} 전반 ${obvFirst.toLocaleString("ko-KR")}`, actual, expected, comparator };
+  }
+  if (rule.type === "turnover_ma") {
+    const period = numberConfig("period", 20);
+    const threshold = numberConfig("threshold", 1.5);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `거래대금이평 데이터 부족` };
+    const maTurnover = average(bars.slice(-period).map(b => b.turnover));
+    const currentTurnover = bars.at(-1)!.turnover;
+    const actual = maTurnover > 0 ? currentTurnover / maTurnover : 0;
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `거래대금이평(${period}) 비율 ${actual.toFixed(2)}배 ${comparator} ${threshold}배`, actual, expected: threshold, comparator };
+  }
+  if (rule.type === "bearish_candle_count") {
+    const days = numberConfig("days", 5);
+    const requiredCount = numberConfig("count", 3);
+    const actual = bars.slice(-days).filter(bar => bar.close < bar.open).length;
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, requiredCount, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `${days}봉 내 음봉 ${actual}회`, actual, expected: requiredCount, comparator };
+  }
+  if (rule.type === "gap_up") {
+    const threshold = numberConfig("threshold", 2);
+    if (bars.length < 2) return { ruleId: rule.id, matched: false, score: 0, detail: `갭상승 데이터 부족` };
+    const yesterdayClose = bars.at(-2)!.close;
+    const todayOpen = bars.at(-1)!.open;
+    const actual = yesterdayClose > 0 ? ((todayOpen - yesterdayClose) / yesterdayClose) * 100 : 0;
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, threshold, comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `갭상승 ${actual.toFixed(2)}% ${comparator} ${threshold}%`, actual, expected: threshold, comparator };
+  }
+  if (rule.type === "gap_down") {
+    const threshold = numberConfig("threshold", 2);
+    if (bars.length < 2) return { ruleId: rule.id, matched: false, score: 0, detail: `갭하락 데이터 부족` };
+    const yesterdayClose = bars.at(-2)!.close;
+    const todayOpen = bars.at(-1)!.open;
+    const actual = yesterdayClose > 0 ? ((todayOpen - yesterdayClose) / yesterdayClose) * 100 : 0;
+    const negativeThreshold = -threshold;
+    const comparator = comparatorFor(rule);
+    const matched = matchesComparator(actual, negativeThreshold, comparator === "이상" ? "이하" : comparator);
+    return { ruleId: rule.id, matched, score: matched ? rule.weight : 0, detail: `갭하락 ${actual.toFixed(2)}% ${comparator === "이상" ? "이하" : comparator} ${negativeThreshold.toFixed(2)}%`, actual, expected: negativeThreshold, comparator: comparator === "이상" ? "이하" : comparator };
+  }
   const days = numberConfig("days", 5);
   const rawThreshold = numberConfig("threshold", 50_000_000_000);
   const unit = normalizedUnitFor(rule);

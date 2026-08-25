@@ -69,7 +69,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "macd_histogram",
     label: "MACD 히스토그램",
     category: "trend",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "fast",
@@ -125,7 +125,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "disparity",
     label: "이격도",
     category: "trend",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -153,7 +153,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "envelope",
     label: "엔벨로프",
     category: "trend",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -286,7 +286,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "williams_r",
     label: "Williams %R",
     category: "momentum",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -314,7 +314,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "cci",
     label: "CCI",
     category: "momentum",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -713,7 +713,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "obv",
     label: "OBV",
     category: "volume",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -732,7 +732,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "turnover_ma",
     label: "거래대금이평",
     category: "volume",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "period",
@@ -809,7 +809,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "bearish_candle_count",
     label: "연속음봉",
     category: "candle_pattern",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "days",
@@ -837,7 +837,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "gap_up",
     label: "갭상승",
     category: "candle_pattern",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "threshold",
@@ -856,7 +856,7 @@ export const INDICATOR_CATALOG: IndicatorDefinition[] = [
     type: "gap_down",
     label: "갭하락",
     category: "candle_pattern",
-    availability: "coming_soon",
+    availability: "available",
     parameters: [
       {
         key: "threshold",

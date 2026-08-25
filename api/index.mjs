@@ -78,6 +78,16 @@ function createRule(random, ruleType, id) {
   if (ruleType === "close_change") return { id, type: ruleType, enabled: true, weight, config: { days: pick(random, [1, 2, 3, 5, 10, 20]), threshold: pick(random, [-5, -3, -1, 1, 3, 5, 10]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
   if (ruleType === "gap_percent") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [-5, -3, -1, 0, 1, 3, 5]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
   if (ruleType === "intrabar_position") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [20, 30, 40, 50, 60, 70, 80]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "macd_histogram") return { id, type: ruleType, enabled: true, weight, config: { fast: pick(random, [8, 10, 12, 15]), slow: pick(random, [20, 26, 30, 40]), signal: pick(random, [5, 7, 9, 12]), threshold: pick(random, [-50, -20, 0, 20, 50]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "disparity") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60, 120]), threshold: pick(random, [90, 95, 100, 105, 110, 120]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "envelope") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60]), percent: pick(random, [2, 3, 5, 7, 10, 15]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "williams_r") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 14, 21, 30]), threshold: pick(random, [-90, -80, -70, -50, -30, -20]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "cci") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [10, 14, 20, 30, 40]), threshold: pick(random, [-200, -100, 0, 100, 200]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "obv") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 14, 20, 40, 60]), comparator: pick(random, ["\uC774\uC0C1", "\uC774\uD558"]) } };
+  if (ruleType === "turnover_ma") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60]), threshold: pick(random, [0.5, 1, 1.5, 2, 3, 5]), comparator: pick(random, ["\uC774\uC0C1", "\uCD08\uACFC"]) } };
+  if (ruleType === "bearish_candle_count") return { id, type: ruleType, enabled: true, weight, config: { days: pick(random, [3, 5, 7, 10, 15, 20]), count: pick(random, [2, 3, 4, 5, 7]), comparator: pick(random, ["\uC774\uC0C1", "\uCD08\uACFC"]) } };
+  if (ruleType === "gap_up") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [1, 2, 3, 5, 7, 10]), comparator: pick(random, ["\uC774\uC0C1", "\uCD08\uACFC"]) } };
+  if (ruleType === "gap_down") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [1, 2, 3, 5, 7, 10]), comparator: pick(random, ["\uC774\uD558", "\uBBF8\uB9CC"]) } };
   return { id, type: "turnover", enabled: true, weight, config: { days: pick(random, [3, 5, 10, 20, 40]), threshold: pick(random, [10, 30, 50, 100, 300, 500]), unit: "\uC5B5\uC6D0", comparator: pick(random, ["\uC774\uC0C1", "\uCD08\uACFC"]) } };
 }
 function selectRuleTypes(random, count3, spec) {
@@ -2691,6 +2701,136 @@ function evaluateRule(rule, input) {
     const maxPrice = numberConfig("maxPrice", Number.POSITIVE_INFINITY);
     const matched2 = actual !== void 0 && actual >= minPrice && actual <= maxPrice;
     return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uC2DC\uAC00 ${actual?.toLocaleString("ko-KR") ?? "N/A"}\uC6D0, \uD5C8\uC6A9 \uBC94\uC704 ${minPrice.toLocaleString("ko-KR")}~${Number.isFinite(maxPrice) ? maxPrice.toLocaleString("ko-KR") : "\u221E"}\uC6D0`, actual, expected: minPrice, comparator: "between" };
+  }
+  if (rule.type === "macd_histogram") {
+    const fast = numberConfig("fast", 12);
+    const slow = numberConfig("slow", 26);
+    const signal = numberConfig("signal", 9);
+    const histogram = macdHistogram(bars, fast, slow, signal);
+    const actual = histogram.at(-1) ?? 0;
+    const threshold2 = numberConfig("threshold", 0);
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `MACD \uD788\uC2A4\uD1A0\uADF8\uB7A8(${fast},${slow},${signal}) ${actual.toFixed(4)} ${comparator2} ${threshold2}`, actual, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "disparity") {
+    const period = numberConfig("period", 20);
+    const threshold2 = numberConfig("threshold", 100);
+    const sma = simpleMovingAverage(bars, period);
+    const close = bars.at(-1)?.close ?? 0;
+    const actual = sma && sma > 0 ? close / sma * 100 : null;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = actual !== null && matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uC774\uACA9\uB3C4(${period}) ${actual?.toFixed(2) ?? "N/A"}% ${comparator2} ${threshold2}%`, actual: actual ?? void 0, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "envelope") {
+    const period = numberConfig("period", 20);
+    const percent = numberConfig("percent", 5);
+    const sma = simpleMovingAverage(bars, period);
+    const close = bars.at(-1)?.close ?? 0;
+    const comparator2 = comparatorFor(rule);
+    if (sma === null) return { ruleId: rule.id, matched: false, score: 0, detail: `\uC5D4\uBCA8\uB85C\uD504 \uB370\uC774\uD130 \uBD80\uC871` };
+    const upper = sma * (1 + percent / 100);
+    const lower = sma * (1 - percent / 100);
+    const actual = close;
+    const expected = comparator2 === "\uC774\uD558" || comparator2 === "\uBBF8\uB9CC" ? lower : upper;
+    const matched2 = matchesComparator(actual, expected, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uC5D4\uBCA8\uB85C\uD504(${period}, ${percent}%) \uC885\uAC00 ${actual.toFixed(0)} ${comparator2} ${expected.toFixed(0)}`, actual, expected, comparator: comparator2 };
+  }
+  if (rule.type === "williams_r") {
+    const period = numberConfig("period", 14);
+    const threshold2 = numberConfig("threshold", -20);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `Williams %R \uB370\uC774\uD130 \uBD80\uC871` };
+    const window = bars.slice(-period);
+    const highestHigh = Math.max(...window.map((b) => b.high));
+    const lowestLow = Math.min(...window.map((b) => b.low));
+    const close = window.at(-1).close;
+    const actual = highestHigh === lowestLow ? -50 : (highestHigh - close) / (highestHigh - lowestLow) * -100;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `Williams %R(${period}) ${actual.toFixed(2)} ${comparator2} ${threshold2}`, actual, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "cci") {
+    const period = numberConfig("period", 20);
+    const threshold2 = numberConfig("threshold", 100);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `CCI \uB370\uC774\uD130 \uBD80\uC871` };
+    const window = bars.slice(-period);
+    const typicalPrices = window.map((b) => (b.high + b.low + b.close) / 3);
+    const smaTP = average(typicalPrices);
+    const meanDeviation = average(typicalPrices.map((tp) => Math.abs(tp - smaTP)));
+    const latestTP = typicalPrices.at(-1);
+    const actual = meanDeviation === 0 ? 0 : (latestTP - smaTP) / (0.015 * meanDeviation);
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `CCI(${period}) ${actual.toFixed(2)} ${comparator2} ${threshold2}`, actual, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "obv") {
+    const period = numberConfig("period", 20);
+    if (bars.length < period + 1) return { ruleId: rule.id, matched: false, score: 0, detail: `OBV \uB370\uC774\uD130 \uBD80\uC871` };
+    const window = bars.slice(-(period + 1));
+    let obv = 0;
+    for (let i = 1; i < window.length; i++) {
+      if (window[i].close > window[i - 1].close) obv += window[i].volume;
+      else if (window[i].close < window[i - 1].close) obv -= window[i].volume;
+    }
+    const halfPeriod = Math.floor(period / 2);
+    const firstHalfBars = bars.slice(-(period + 1), -(halfPeriod + 1));
+    const secondHalfBars = bars.slice(-(halfPeriod + 1));
+    let obvFirst = 0;
+    for (let i = 1; i < firstHalfBars.length; i++) {
+      if (firstHalfBars[i].close > firstHalfBars[i - 1].close) obvFirst += firstHalfBars[i].volume;
+      else if (firstHalfBars[i].close < firstHalfBars[i - 1].close) obvFirst -= firstHalfBars[i].volume;
+    }
+    let obvSecond = 0;
+    for (let i = 1; i < secondHalfBars.length; i++) {
+      if (secondHalfBars[i].close > secondHalfBars[i - 1].close) obvSecond += secondHalfBars[i].volume;
+      else if (secondHalfBars[i].close < secondHalfBars[i - 1].close) obvSecond -= secondHalfBars[i].volume;
+    }
+    const comparator2 = comparatorFor(rule);
+    const actual = obvSecond;
+    const expected = obvFirst;
+    const matched2 = matchesComparator(actual, expected, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `OBV(${period}) \uD6C4\uBC18 ${obvSecond.toLocaleString("ko-KR")} ${comparator2} \uC804\uBC18 ${obvFirst.toLocaleString("ko-KR")}`, actual, expected, comparator: comparator2 };
+  }
+  if (rule.type === "turnover_ma") {
+    const period = numberConfig("period", 20);
+    const threshold2 = numberConfig("threshold", 1.5);
+    if (bars.length < period) return { ruleId: rule.id, matched: false, score: 0, detail: `\uAC70\uB798\uB300\uAE08\uC774\uD3C9 \uB370\uC774\uD130 \uBD80\uC871` };
+    const maTurnover = average(bars.slice(-period).map((b) => b.turnover));
+    const currentTurnover = bars.at(-1).turnover;
+    const actual = maTurnover > 0 ? currentTurnover / maTurnover : 0;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uAC70\uB798\uB300\uAE08\uC774\uD3C9(${period}) \uBE44\uC728 ${actual.toFixed(2)}\uBC30 ${comparator2} ${threshold2}\uBC30`, actual, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "bearish_candle_count") {
+    const days2 = numberConfig("days", 5);
+    const requiredCount = numberConfig("count", 3);
+    const actual = bars.slice(-days2).filter((bar) => bar.close < bar.open).length;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, requiredCount, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `${days2}\uBD09 \uB0B4 \uC74C\uBD09 ${actual}\uD68C`, actual, expected: requiredCount, comparator: comparator2 };
+  }
+  if (rule.type === "gap_up") {
+    const threshold2 = numberConfig("threshold", 2);
+    if (bars.length < 2) return { ruleId: rule.id, matched: false, score: 0, detail: `\uAC2D\uC0C1\uC2B9 \uB370\uC774\uD130 \uBD80\uC871` };
+    const yesterdayClose = bars.at(-2).close;
+    const todayOpen = bars.at(-1).open;
+    const actual = yesterdayClose > 0 ? (todayOpen - yesterdayClose) / yesterdayClose * 100 : 0;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, threshold2, comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uAC2D\uC0C1\uC2B9 ${actual.toFixed(2)}% ${comparator2} ${threshold2}%`, actual, expected: threshold2, comparator: comparator2 };
+  }
+  if (rule.type === "gap_down") {
+    const threshold2 = numberConfig("threshold", 2);
+    if (bars.length < 2) return { ruleId: rule.id, matched: false, score: 0, detail: `\uAC2D\uD558\uB77D \uB370\uC774\uD130 \uBD80\uC871` };
+    const yesterdayClose = bars.at(-2).close;
+    const todayOpen = bars.at(-1).open;
+    const actual = yesterdayClose > 0 ? (todayOpen - yesterdayClose) / yesterdayClose * 100 : 0;
+    const negativeThreshold = -threshold2;
+    const comparator2 = comparatorFor(rule);
+    const matched2 = matchesComparator(actual, negativeThreshold, comparator2 === "\uC774\uC0C1" ? "\uC774\uD558" : comparator2);
+    return { ruleId: rule.id, matched: matched2, score: matched2 ? rule.weight : 0, detail: `\uAC2D\uD558\uB77D ${actual.toFixed(2)}% ${comparator2 === "\uC774\uC0C1" ? "\uC774\uD558" : comparator2} ${negativeThreshold.toFixed(2)}%`, actual, expected: negativeThreshold, comparator: comparator2 === "\uC774\uC0C1" ? "\uC774\uD558" : comparator2 };
   }
   const days = numberConfig("days", 5);
   const rawThreshold = numberConfig("threshold", 5e10);

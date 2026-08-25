@@ -15,11 +15,13 @@ import { MockTradingDashboard } from "./MockTradingDashboard";
 import { DataStatus } from "./DataStatus";
 import { DayTradingExperimentPanel } from "./DayTradingExperimentPanel";
 import { ConditionBuilderPage } from "../pages/ConditionBuilderPage";
-import { BarChart3, FlaskConical, TrendingUp, Database, Activity, Menu, X, SlidersHorizontal } from "lucide-react";
+import { HomeSummary } from "./HomeSummary";
+import { BarChart3, FlaskConical, TrendingUp, Database, Activity, Menu, X, SlidersHorizontal, Home } from "lucide-react";
 
-type Tab = "backtest" | "chart" | "trading" | "daytrade" | "data" | "builder";
+type Tab = "home" | "backtest" | "chart" | "trading" | "daytrade" | "data" | "builder";
 
 const TABS: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof FlaskConical; description: string }> = [
+  { id: "home", label: "홈", shortLabel: "홈", icon: Home, description: "전체 현황 요약 · 빠른 실행" },
   { id: "backtest", label: "원클릭 백테스트", shortLabel: "백테스트", icon: FlaskConical, description: "랜덤 조건식 생성 → 자동 검증 → 채택 → 육성" },
   { id: "chart", label: "종목 차트", shortLabel: "차트", icon: BarChart3, description: "캔들스틱 · 이평선 · MACD · 볼린저 (1분~월봉)" },
   { id: "daytrade", label: "데이트레이드 실험", shortLabel: "실험", icon: Activity, description: "생존 조건식의 실시간 모의투자 추적" },
@@ -29,7 +31,7 @@ const TABS: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof Fla
 ];
 
 export function MainDashboard() {
-  const [tab, setTab] = useState<Tab>("backtest");
+  const [tab, setTab] = useState<Tab>("home");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const currentTab = TABS.find(t => t.id === tab)!;
 
@@ -129,6 +131,7 @@ export function MainDashboard() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto">
+        {tab === "home" && <HomeSummary onNavigate={(t) => setTab(t as Tab)} />}
         {tab === "backtest" && <OneClickBacktest />}
         {tab === "chart" && <ChartPage />}
         {tab === "daytrade" && <DayTradingExperimentPanel />}

@@ -116,6 +116,16 @@ function createRule(random: SeededRandom, ruleType: EvolutionRuleType, id: strin
   if (ruleType === "close_change") return { id, type: ruleType, enabled: true, weight, config: { days: pick(random, [1, 2, 3, 5, 10, 20]), threshold: pick(random, [-5, -3, -1, 1, 3, 5, 10]), comparator: pick(random, ["이상", "이하"]) } };
   if (ruleType === "gap_percent") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [-5, -3, -1, 0, 1, 3, 5]), comparator: pick(random, ["이상", "이하"]) } };
   if (ruleType === "intrabar_position") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [20, 30, 40, 50, 60, 70, 80]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "macd_histogram") return { id, type: ruleType, enabled: true, weight, config: { fast: pick(random, [8, 10, 12, 15]), slow: pick(random, [20, 26, 30, 40]), signal: pick(random, [5, 7, 9, 12]), threshold: pick(random, [-50, -20, 0, 20, 50]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "disparity") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60, 120]), threshold: pick(random, [90, 95, 100, 105, 110, 120]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "envelope") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60]), percent: pick(random, [2, 3, 5, 7, 10, 15]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "williams_r") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 14, 21, 30]), threshold: pick(random, [-90, -80, -70, -50, -30, -20]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "cci") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [10, 14, 20, 30, 40]), threshold: pick(random, [-200, -100, 0, 100, 200]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "obv") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 14, 20, 40, 60]), comparator: pick(random, ["이상", "이하"]) } };
+  if (ruleType === "turnover_ma") return { id, type: ruleType, enabled: true, weight, config: { period: pick(random, [5, 10, 20, 40, 60]), threshold: pick(random, [0.5, 1, 1.5, 2, 3, 5]), comparator: pick(random, ["이상", "초과"]) } };
+  if (ruleType === "bearish_candle_count") return { id, type: ruleType, enabled: true, weight, config: { days: pick(random, [3, 5, 7, 10, 15, 20]), count: pick(random, [2, 3, 4, 5, 7]), comparator: pick(random, ["이상", "초과"]) } };
+  if (ruleType === "gap_up") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [1, 2, 3, 5, 7, 10]), comparator: pick(random, ["이상", "초과"]) } };
+  if (ruleType === "gap_down") return { id, type: ruleType, enabled: true, weight, config: { threshold: pick(random, [1, 2, 3, 5, 7, 10]), comparator: pick(random, ["이하", "미만"]) } };
   return { id, type: "turnover", enabled: true, weight, config: { days: pick(random, [3, 5, 10, 20, 40]), threshold: pick(random, [10, 30, 50, 100, 300, 500]), unit: "억원", comparator: pick(random, ["이상", "초과"]) } };
 }
 

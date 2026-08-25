@@ -26,7 +26,7 @@ export type RiskGateResult = {
 
 export type ConditionRule = {
   id: string;
-  type: "macd_rising" | "macd_level" | "ma_position" | "high_return" | "new_high" | "turnover" | "rsi" | "bollinger" | "stochastic" | "atr_percent" | "volume_ratio" | "close_change" | "gap_percent" | "intrabar_position" | "turnover_count" | "volume_ratio_count" | "bullish_candle_count" | "price_range";
+  type: "macd_rising" | "macd_level" | "ma_position" | "high_return" | "new_high" | "turnover" | "rsi" | "bollinger" | "stochastic" | "atr_percent" | "volume_ratio" | "close_change" | "gap_percent" | "intrabar_position" | "turnover_count" | "volume_ratio_count" | "bullish_candle_count" | "price_range" | "macd_histogram" | "disparity" | "envelope" | "williams_r" | "cci" | "obv" | "turnover_ma" | "bearish_candle_count" | "gap_up" | "gap_down";
   enabled: boolean;
   weight: number;
   config: Record<string, number | string | boolean>;
