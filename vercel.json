@@ -4,6 +4,11 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist/public",
   "regions": ["hkg1"],
+  "functions": {
+    "api/index.mjs": {
+      "includeFiles": "node_modules/**"
+    }
+  },
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.mjs" },
     { "handle": "filesystem" },
