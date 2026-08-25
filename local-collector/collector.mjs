@@ -196,14 +196,15 @@ class KiwoomApi {
       }
       const rows = payload.stk_dt_pole_chart_qry || [];
       for (const row of rows) {
+        const asNum = (v) => Math.abs(Number(String(v ?? "0").replace(/,/g, "").replace(/^\+/, ""))) || 0;
         bars.push({
           date: String(row.dt || "").replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3"),
-          open: Math.round(Number(row.open_pric || 0)),
-          high: Math.round(Number(row.high_pric || 0)),
-          low: Math.round(Number(row.low_pric || 0)),
-          close: Math.round(Number(row.clos_pric || 0)),
-          volume: Math.round(Number(row.trde_qty || 0)),
-          turnover: Math.round(Number(row.trde_amt || 0)),
+          open: Math.round(asNum(row.open_pric)),
+          high: Math.round(asNum(row.high_pric)),
+          low: Math.round(asNum(row.low_pric)),
+          close: Math.round(asNum(row.cur_prc)),
+          volume: Math.round(asNum(row.trde_qty)),
+          turnover: Math.round(asNum(row.trde_prica) * 1000000),
         });
       }
       contYn = String(payload.cont_yn || "N");
@@ -266,27 +267,27 @@ class KiwoomApi {
     const token = await this.getToken();
     await this.ensureRateLimit();
 
-    const response = await fetch(`${this.baseUrl}/api/dostk/ranking`, {
+    const response = await fetch(`${this.baseUrl}/api/dostk/rkinfo`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json;charset=UTF-8",
         authorization: `Bearer ${token}`,
         "api-id": "ka10032",
       },
-      body: JSON.stringify({ mrkt_div: market, stex_tp: "KRX", vol_rank_tp: "1" }),
-      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ mrkt_tp: market, mang_stk_incls: "0", stex_tp: "1" }),
+      signal: AbortSignal.timeout(8000),
     });
     const payload = await response.json();
     if (!response.ok || String(payload.return_code ?? "0") !== "0") {
       throw new Error(`거래대금순위 조회 실패: ${payload.return_msg || response.status}`);
     }
-    const items = (payload.stk_trde_amt_rank_qry || []).map((row, i) => ({
+    const items = (payload.trde_prica_upper || []).map((row, i) => ({
       symbol: String(row.stk_cd || "").trim(),
       name: String(row.stk_nm || "").trim(),
       rank: i + 1,
-      price: Math.round(Number(row.cur_prc || 0)),
-      turnover: Math.round(Number(row.trde_amt || 0)),
-      changeRate: Number(row.chng_rt || 0),
+      price: Math.abs(Number(String(row.cur_prc || "0").replace(/,/g, "").trim())) || 0,
+      turnover: (Math.abs(Number(String(row.trde_prica || "0").replace(/,/g, "").trim())) || 0) * 1000000,
+      changeRate: Number(String(row.flu_rt || "0").replace(/,/g, "").trim()) || 0,
     })).filter(item => /^\d{6}$/.test(item.symbol) && item.price > 0);
     return items;
   }
@@ -564,8 +565,8 @@ async function main() {
   try {
     await api.getToken();
     log("INFO", "키움 OAuth 토큰 발급 성공 ✅");
-    // Report connection to server
-    await sync.reportTerminalConnection(publicIp, "connected", { oauth: "passed", apiRead: "not_run", serviceSync: "not_run", serviceReadBack: "not_run" });
+    // Report connection to server (non-blocking)
+    sync.reportTerminalConnection(publicIp, "connected", { oauth: "passed", apiRead: "not_run", serviceSync: "not_run", serviceReadBack: "not_run" }).catch(() => {});
   } catch (error) {
     log("ERROR", "키움 OAuth 토큰 발급 실패 ❌", { error: error.message });
     await sync.reportTerminalConnection(publicIp, "failed", { oauth: "failed", apiRead: "not_run", serviceSync: "not_run", serviceReadBack: "not_run" }).catch(() => {});
