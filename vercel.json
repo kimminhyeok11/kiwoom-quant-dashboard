@@ -5,6 +5,7 @@
   "outputDirectory": "dist/public",
   "regions": ["hkg1"],
   "routes": [
+    { "src": "/api/trpc/(.*)", "dest": "/api/index.ts" },
     { "src": "/api/(.*)", "dest": "/api/index.ts" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
