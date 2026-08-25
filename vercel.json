@@ -6,7 +6,7 @@
   "regions": ["hkg1"],
   "functions": {
     "api/index.mjs": {
-      "includeFiles": "dist/**"
+      "includeFiles": "node_modules/**"
     }
   },
   "routes": [
