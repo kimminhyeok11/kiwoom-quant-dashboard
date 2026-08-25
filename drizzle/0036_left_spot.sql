@@ -1,0 +1,1 @@
+ALTER TABLE `kiwoom_terminal_connection_checks` ADD `verificationJson` json;

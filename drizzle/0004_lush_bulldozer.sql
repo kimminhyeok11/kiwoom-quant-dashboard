@@ -1,0 +1,2 @@
+ALTER TABLE `ranking_snapshots` ADD `runKey` varchar(64);--> statement-breakpoint
+ALTER TABLE `ranking_snapshots` ADD CONSTRAINT `ranking_snapshots_run_symbol_unique` UNIQUE(`userId`,`presetId`,`symbol`,`runKey`);

@@ -1,0 +1,1 @@
+ALTER TABLE `minute_research_candidates` ADD `collectedPresetId` int;

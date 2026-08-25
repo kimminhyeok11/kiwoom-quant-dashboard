@@ -1,0 +1,2 @@
+ALTER TABLE `public_strategy_cards` DROP INDEX `public_strategy_cards_source_candidate_unique`;--> statement-breakpoint
+CREATE INDEX `public_strategy_cards_source_candidate_idx` ON `public_strategy_cards` (`sourceCandidateId`);

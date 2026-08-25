@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `avatarId` varchar(32) DEFAULT 'nebula' NOT NULL;

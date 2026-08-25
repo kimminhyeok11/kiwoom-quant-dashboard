@@ -1,0 +1,1 @@
+ALTER TABLE `evolution_candidates` ADD `walkForwardMetricsJson` json;

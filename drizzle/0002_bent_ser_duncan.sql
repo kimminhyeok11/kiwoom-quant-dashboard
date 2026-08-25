@@ -1,0 +1,1 @@
+ALTER TABLE `order_intents` MODIFY COLUMN `status` enum('pending_confirmation','confirmed','submitting','blocked','submitted','filled','rejected','cancelled') NOT NULL DEFAULT 'pending_confirmation';

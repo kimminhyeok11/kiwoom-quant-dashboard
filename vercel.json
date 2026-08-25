@@ -1,0 +1,27 @@
+{
+  "buildCommand": "pnpm build",
+  "devCommand": "pnpm dev",
+  "installCommand": "pnpm install",
+  "framework": null,
+  "regions": ["hkg1"],
+  "env": {
+    "DATABASE_URL": {
+      "description": "PostgreSQL connection string for Supabase"
+    },
+    "NEXTAUTH_SECRET": {
+      "description": "Secret key for NextAuth.js"
+    },
+    "NEXTAUTH_URL": {
+      "description": "URL for NextAuth.js"
+    },
+    "KIWOOM_ACCOUNT_NUMBER": {
+      "description": "Kiwoom account number"
+    },
+    "OWNER_OPEN_ID": {
+      "description": "Owner OpenID"
+    },
+    "OPENAI_API_KEY": {
+      "description": "OpenAI API key for research features"
+    }
+  }
+}
