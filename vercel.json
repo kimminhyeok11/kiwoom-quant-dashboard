@@ -4,9 +4,13 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist/public",
   "regions": ["hkg1"],
+  "functions": {
+    "api/index.mjs": {
+      "includeFiles": "dist/**"
+    }
+  },
   "routes": [
-    { "src": "/api/trpc/(.*)", "dest": "/api/index.ts" },
-    { "src": "/api/(.*)", "dest": "/api/index.ts" },
+    { "src": "/api/(.*)", "dest": "/api/index.mjs" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
