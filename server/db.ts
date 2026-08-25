@@ -11,7 +11,7 @@ let _client: ReturnType<typeof postgres> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _client = postgres(process.env.DATABASE_URL, { prepare: false, idle_timeout: 20, connect_timeout: 10 });
+      _client = postgres(process.env.DATABASE_URL, { prepare: false, idle_timeout: 20, connect_timeout: 10, ssl: "require" });
       _db = drizzle(_client);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
