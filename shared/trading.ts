@@ -60,3 +60,51 @@ export type ConditionEvaluationDetail = {
   comparator: ConditionComparator;
   explanation: string;
 };
+
+// === Advanced Condition Builder Types ===
+
+export type IndicatorType =
+  | ConditionRule["type"]
+  | "macd_histogram"
+  | "vwap"
+  | "disparity"
+  | "envelope"
+  | "adx"
+  | "dmi"
+  | "williams_r"
+  | "cci"
+  | "new_high_low"
+  | "obv"
+  | "turnover_ma"
+  | "volume_profile"
+  | "bearish_candle_count"
+  | "gap_up"
+  | "gap_down"
+  | "n_pattern";
+
+export type AvailabilityStatus = "available" | "coming_soon";
+
+export type IndicatorCategory = "trend" | "momentum" | "volatility" | "volume" | "candle_pattern";
+
+export type IndicatorParameterSchema = {
+  key: string;
+  label: string;
+  type: "number" | "select" | "boolean";
+  min?: number;
+  max?: number;
+  step?: number;
+  default: number | string | boolean;
+  options?: Array<{ value: string | number; label: string }>;
+  unit?: string;
+};
+
+export type IndicatorDefinition = {
+  type: IndicatorType;
+  label: string;
+  category: IndicatorCategory;
+  availability: AvailabilityStatus;
+  parameters: IndicatorParameterSchema[];
+  defaultComparator: ConditionComparator;
+  defaultWeight: number;
+  description?: string;
+};

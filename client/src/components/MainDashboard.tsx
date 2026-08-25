@@ -14,9 +14,10 @@ import { ChartPage } from "./ChartPage";
 import { MockTradingDashboard } from "./MockTradingDashboard";
 import { DataStatus } from "./DataStatus";
 import { DayTradingExperimentPanel } from "./DayTradingExperimentPanel";
-import { BarChart3, FlaskConical, TrendingUp, Database, Activity, Menu, X } from "lucide-react";
+import { ConditionBuilderPage } from "../pages/ConditionBuilderPage";
+import { BarChart3, FlaskConical, TrendingUp, Database, Activity, Menu, X, SlidersHorizontal } from "lucide-react";
 
-type Tab = "backtest" | "chart" | "trading" | "daytrade" | "data";
+type Tab = "backtest" | "chart" | "trading" | "daytrade" | "data" | "builder";
 
 const TABS: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof FlaskConical; description: string }> = [
   { id: "backtest", label: "원클릭 백테스트", shortLabel: "백테스트", icon: FlaskConical, description: "랜덤 조건식 생성 → 자동 검증 → 채택 → 육성" },
@@ -24,6 +25,7 @@ const TABS: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof Fla
   { id: "daytrade", label: "데이트레이드 실험", shortLabel: "실험", icon: Activity, description: "생존 조건식의 실시간 모의투자 추적" },
   { id: "trading", label: "모의투자 현황", shortLabel: "모의투자", icon: TrendingUp, description: "키움 모의투자 포지션 · 체결 · 손익" },
   { id: "data", label: "데이터 현황", shortLabel: "데이터", icon: Database, description: "수집 상태 · IP 확인 · 사용 방법" },
+  { id: "builder", label: "조건식 작성기", shortLabel: "조건식", icon: SlidersHorizontal, description: "고급 조건식 작성 · 파라미터 설정 · 논리 조합 · 즉시 백테스트" },
 ];
 
 export function MainDashboard() {
@@ -132,6 +134,7 @@ export function MainDashboard() {
         {tab === "daytrade" && <DayTradingExperimentPanel />}
         {tab === "trading" && <MockTradingDashboard />}
         {tab === "data" && <DataStatus />}
+        {tab === "builder" && <ConditionBuilderPage />}
       </main>
     </div>
   );

@@ -7738,6 +7738,324 @@ var mockTradingRouter = router({
   })
 });
 
+// server/routers/conditionBuilder.ts
+import { z as z21 } from "zod";
+import { and as and23, asc as asc8, desc as desc26, eq as eq32 } from "drizzle-orm";
+import { TRPCError as TRPCError20 } from "@trpc/server";
+
+// shared/expressionValidation.ts
+var MAX_EXPRESSION_DEPTH = 4;
+function calculateExpressionDepth(node, current = 1) {
+  if (!node.children.length) return current;
+  const childDepths = node.children.map(
+    (child) => "children" in child ? calculateExpressionDepth(child, current + 1) : current
+  );
+  return Math.max(...childDepths);
+}
+function countActiveRules(node) {
+  return node.children.reduce((count3, child) => {
+    if ("children" in child)
+      return count3 + countActiveRules(child);
+    return count3 + (child.enabled ? 1 : 0);
+  }, 0);
+}
+function validateExpression(root) {
+  const errors = [];
+  if (countActiveRules(root) === 0) {
+    errors.push({
+      code: "NO_ACTIVE_RULES",
+      message: "\uCD5C\uC18C 1\uAC1C \uC774\uC0C1\uC758 \uD65C\uC131 \uC870\uAC74\uC774 \uD544\uC694\uD569\uB2C8\uB2E4"
+    });
+  }
+  if (calculateExpressionDepth(root) > MAX_EXPRESSION_DEPTH) {
+    errors.push({
+      code: "MAX_DEPTH_EXCEEDED",
+      message: `\uC911\uCCA9 \uAE4A\uC774\uB294 \uCD5C\uB300 ${MAX_EXPRESSION_DEPTH}\uB2E8\uACC4\uAE4C\uC9C0 \uD5C8\uC6A9\uB429\uB2C8\uB2E4`
+    });
+  }
+  return errors;
+}
+
+// server/routers/conditionBuilder.ts
+var conditionBuilderRouter = router({
+  /**
+   * 조건식 저장 (upsert)
+   */
+  save: protectedProcedure.input(
+    z21.object({
+      name: z21.string().min(1).max(120),
+      description: z21.string().max(500).optional(),
+      expressionJson: z21.unknown()
+    })
+  ).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const [saved] = await db.insert(strategyPresets).values({
+      userId: ctx.user.id,
+      name: input.name,
+      rulesJson: input.expressionJson,
+      scoringJson: {
+        description: input.description,
+        savedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }).returning();
+    return { id: saved.id, name: saved.name };
+  }),
+  /**
+   * 저장된 조건식 목록 (createdAt DESC, 최대 50개)
+   */
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const presets = await db.select().from(strategyPresets).where(eq32(strategyPresets.userId, ctx.user.id)).orderBy(desc26(strategyPresets.createdAt)).limit(50);
+    return presets.map((p) => ({
+      id: p.id,
+      name: p.name,
+      rulesJson: p.rulesJson,
+      scoringJson: p.scoringJson,
+      createdAt: p.createdAt
+    }));
+  }),
+  /**
+   * 단일 프리셋 불러오기
+   */
+  load: protectedProcedure.input(z21.object({ id: z21.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const [preset] = await db.select().from(strategyPresets).where(
+      and23(
+        eq32(strategyPresets.id, input.id),
+        eq32(strategyPresets.userId, ctx.user.id)
+      )
+    ).limit(1);
+    if (!preset) {
+      throw new TRPCError20({
+        code: "NOT_FOUND",
+        message: "\uC870\uAC74\uC2DD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"
+      });
+    }
+    return preset;
+  }),
+  /**
+   * 조건식 삭제
+   */
+  delete: protectedProcedure.input(z21.object({ id: z21.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const result = await db.delete(strategyPresets).where(
+      and23(
+        eq32(strategyPresets.id, input.id),
+        eq32(strategyPresets.userId, ctx.user.id)
+      )
+    ).returning();
+    if (!result.length) {
+      throw new TRPCError20({
+        code: "NOT_FOUND",
+        message: "\uC0AD\uC81C\uD560 \uC870\uAC74\uC2DD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"
+      });
+    }
+    return { success: true };
+  }),
+  /**
+   * 조건식 복제 (" (복사)" 접미사 추가)
+   */
+  duplicate: protectedProcedure.input(z21.object({ id: z21.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const [original] = await db.select().from(strategyPresets).where(
+      and23(
+        eq32(strategyPresets.id, input.id),
+        eq32(strategyPresets.userId, ctx.user.id)
+      )
+    ).limit(1);
+    if (!original) {
+      throw new TRPCError20({
+        code: "NOT_FOUND",
+        message: "\uBCF5\uC81C\uD560 \uC870\uAC74\uC2DD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"
+      });
+    }
+    const newName = `${original.name} (\uBCF5\uC0AC)`;
+    const [duplicated] = await db.insert(strategyPresets).values({
+      userId: ctx.user.id,
+      name: newName,
+      rulesJson: original.rulesJson,
+      scoringJson: original.scoringJson
+    }).returning();
+    return { id: duplicated.id, name: duplicated.name };
+  }),
+  /**
+   * 조건식 이름 변경
+   */
+  rename: protectedProcedure.input(
+    z21.object({
+      id: z21.number(),
+      name: z21.string().min(1).max(120)
+    })
+  ).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const result = await db.update(strategyPresets).set({ name: input.name, updatedAt: /* @__PURE__ */ new Date() }).where(
+      and23(
+        eq32(strategyPresets.id, input.id),
+        eq32(strategyPresets.userId, ctx.user.id)
+      )
+    ).returning();
+    if (!result.length) {
+      throw new TRPCError20({
+        code: "NOT_FOUND",
+        message: "\uC774\uB984\uC744 \uBCC0\uACBD\uD560 \uC870\uAC74\uC2DD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"
+      });
+    }
+    return { success: true };
+  }),
+  /**
+   * 중복 이름 체크
+   */
+  checkNameExists: protectedProcedure.input(z21.object({ name: z21.string() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const [existing] = await db.select({ id: strategyPresets.id }).from(strategyPresets).where(
+      and23(
+        eq32(strategyPresets.userId, ctx.user.id),
+        eq32(strategyPresets.name, input.name)
+      )
+    ).limit(1);
+    return { exists: !!existing };
+  }),
+  /**
+   * 조건식 백테스트 실행
+   */
+  runBacktest: protectedProcedure.input(
+    z21.object({
+      expressionJson: z21.unknown(),
+      holdingDays: z21.number().int().min(1).max(60).default(5),
+      feeRate: z21.number().min(0).max(0.01).default(3e-4),
+      slippageBps: z21.number().min(0).max(100).default(8),
+      minScore: z21.number().min(0).max(200).default(0)
+    })
+  ).mutation(async ({ input }) => {
+    const expression = input.expressionJson;
+    const validationErrors = validateExpression(expression);
+    if (validationErrors.length > 0) {
+      throw new TRPCError20({
+        code: "BAD_REQUEST",
+        message: validationErrors.map((e) => e.message).join("; ")
+      });
+    }
+    const db = await getDb();
+    if (!db)
+      throw new TRPCError20({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "DB \uC5F0\uACB0 \uBD88\uAC00"
+      });
+    const allSymbols = await db.selectDistinct({ symbol: localResearchDailyBars.symbol }).from(localResearchDailyBars).where(eq32(localResearchDailyBars.adjustmentBasis, "adjusted")).limit(100);
+    if (!allSymbols.length) {
+      throw new TRPCError20({
+        code: "PRECONDITION_FAILED",
+        message: "\uBC31\uD14C\uC2A4\uD2B8\uD560 \uC77C\uBD09 \uB370\uC774\uD130\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uB85C\uCEEC \uC218\uC9D1\uAE30\uB85C \uB370\uC774\uD130\uB97C \uBA3C\uC800 \uC218\uC9D1\uD558\uC138\uC694."
+      });
+    }
+    const shuffled = allSymbols.sort(() => Math.random() - 0.5);
+    const selectedSymbols = shuffled.slice(0, Math.min(5, shuffled.length));
+    const barsBySymbol = {};
+    for (const { symbol } of selectedSymbols) {
+      const rows = await db.select({
+        date: localResearchDailyBars.date,
+        open: localResearchDailyBars.open,
+        high: localResearchDailyBars.high,
+        low: localResearchDailyBars.low,
+        close: localResearchDailyBars.close,
+        volume: localResearchDailyBars.volume,
+        turnover: localResearchDailyBars.turnover
+      }).from(localResearchDailyBars).where(
+        and23(
+          eq32(localResearchDailyBars.symbol, symbol),
+          eq32(localResearchDailyBars.adjustmentBasis, "adjusted")
+        )
+      ).orderBy(asc8(localResearchDailyBars.date)).limit(600);
+      if (rows.length >= 60) {
+        barsBySymbol[symbol] = rows.map((r) => ({
+          date: r.date,
+          open: r.open,
+          high: r.high,
+          low: r.low,
+          close: r.close,
+          volume: Number(r.volume),
+          turnover: Number(r.turnover)
+        }));
+      }
+    }
+    const eligibleSymbols = Object.keys(barsBySymbol);
+    if (!eligibleSymbols.length) {
+      throw new TRPCError20({
+        code: "PRECONDITION_FAILED",
+        message: "60\uAC1C \uC774\uC0C1\uC758 \uC77C\uBD09\uC774 \uC788\uB294 \uC885\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uB370\uC774\uD130\uB97C \uB354 \uC218\uC9D1\uD558\uC138\uC694."
+      });
+    }
+    const feeRate = input.feeRate + input.slippageBps / 1e4;
+    const symbolResults = [];
+    for (const symbol of eligibleSymbols) {
+      const bars = barsBySymbol[symbol];
+      const maxStart = Math.max(0, bars.length - 60);
+      const startIndex = Math.floor(Math.random() * maxStart);
+      const slicedBars = bars.slice(startIndex);
+      const result = runDailyBacktest({
+        bars: slicedBars,
+        expression,
+        minScore: input.minScore,
+        holdingDays: input.holdingDays,
+        feeRate,
+        entryDelayDays: 1,
+        entryTiming: "open"
+      });
+      symbolResults.push({
+        symbol,
+        totalReturn: Number(result.totalReturn.toFixed(2)),
+        winRate: Number(result.winRate.toFixed(1)),
+        tradeCount: result.tradeCount,
+        maxDrawdown: Number(result.maxDrawdown.toFixed(2)),
+        trades: result.trades.slice(-10)
+      });
+    }
+    const averageReturn = symbolResults.reduce((sum, r) => sum + r.totalReturn, 0) / symbolResults.length;
+    const averageWinRate = symbolResults.reduce((sum, r) => sum + r.winRate, 0) / symbolResults.length;
+    return {
+      symbols: eligibleSymbols,
+      results: symbolResults,
+      averageReturn: Number(averageReturn.toFixed(2)),
+      averageWinRate: Number(averageWinRate.toFixed(1))
+    };
+  })
+});
+
 // server/routers.ts
 var appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -7772,7 +8090,8 @@ var appRouter = router({
   survivalResearch: survivalResearchRouter,
   chartData: chartDataRouter,
   oneClickBacktest: oneClickBacktestRouter,
-  mockTrading: mockTradingRouter
+  mockTrading: mockTradingRouter,
+  conditionBuilder: conditionBuilderRouter
   // TODO: add feature routers here, e.g.
   // todo: router({
   //   list: protectedProcedure.query(({ ctx }) =>
@@ -8009,7 +8328,7 @@ function serveStatic(app2) {
 }
 
 // server/scheduled/rankingRefresh.ts
-import { eq as eq32 } from "drizzle-orm";
+import { eq as eq33 } from "drizzle-orm";
 function buildRankingRunKey(taskUid, now) {
   return `${taskUid}:${now.toISOString().slice(0, 16)}`;
 }
@@ -8023,7 +8342,7 @@ async function rankingRefreshHandler(req, res) {
     if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "database-unavailable", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
-    const profile = (await db.select().from(rankingRefreshProfiles).where(eq32(rankingRefreshProfiles.scheduleCronTaskUid, user.taskUid)).limit(1))[0];
+    const profile = (await db.select().from(rankingRefreshProfiles).where(eq33(rankingRefreshProfiles.scheduleCronTaskUid, user.taskUid)).limit(1))[0];
     if (!profile) return res.json({ ok: true, skipped: "orphan" });
     const broker = new KiwoomClient().getStatus();
     if (!broker.fixedIpRegistered) return res.json({ ok: true, skipped: "fixed-ip-not-registered" });
@@ -8031,14 +8350,14 @@ async function rankingRefreshHandler(req, res) {
     const runKey = buildRankingRunKey(user.taskUid, /* @__PURE__ */ new Date());
     const skip = getRankingRefreshSkip(profile, runKey);
     if (skip) return res.json({ ok: true, skipped: skip, runKey });
-    await db.update(rankingRefreshProfiles).set({ status: "running", lastRunKey: runKey, lastRunAt: /* @__PURE__ */ new Date(), lastError: null }).where(eq32(rankingRefreshProfiles.id, profile.id));
+    await db.update(rankingRefreshProfiles).set({ status: "running", lastRunKey: runKey, lastRunAt: /* @__PURE__ */ new Date(), lastError: null }).where(eq33(rankingRefreshProfiles.id, profile.id));
     try {
       const result = await refreshLiveRanking({ userId: profile.userId, presetId: profile.presetId, universe: profile.universeJson, maxPagesPerSymbol: profile.maxPagesPerSymbol, runKey });
-      await db.update(rankingRefreshProfiles).set({ status: "ready", lastCompletedAt: /* @__PURE__ */ new Date(), lastError: result.failedSymbols.length ? `${result.failedSymbols.length}\uAC1C \uC885\uBAA9 \uC218\uC9D1 \uC2E4\uD328` : null }).where(eq32(rankingRefreshProfiles.id, profile.id));
+      await db.update(rankingRefreshProfiles).set({ status: "ready", lastCompletedAt: /* @__PURE__ */ new Date(), lastError: result.failedSymbols.length ? `${result.failedSymbols.length}\uAC1C \uC885\uBAA9 \uC218\uC9D1 \uC2E4\uD328` : null }).where(eq33(rankingRefreshProfiles.id, profile.id));
       return res.json({ ok: true, runKey, collected: result.collectedSymbols.length, ranked: result.ranked.length, failed: result.failedSymbols.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await db.update(rankingRefreshProfiles).set({ status: "error", lastError: message.slice(0, 500) }).where(eq32(rankingRefreshProfiles.id, profile.id));
+      await db.update(rankingRefreshProfiles).set({ status: "error", lastError: message.slice(0, 500) }).where(eq33(rankingRefreshProfiles.id, profile.id));
       throw error;
     }
   } catch (error) {
@@ -8051,25 +8370,25 @@ async function rankingRefreshHandler(req, res) {
 }
 
 // server/scheduled/autonomousResearch.ts
-import { and as and23, desc as desc26, eq as eq33 } from "drizzle-orm";
+import { and as and24, desc as desc27, eq as eq34 } from "drizzle-orm";
 function getAutonomousTaskSkip(existing) {
   if (!existing) return null;
   return existing.status === "running" ? "already-running" : "already-completed";
 }
 async function getOrCreateDailyRun(db, tradingDate2) {
   const runKey = `${AUTONOMOUS_RESEARCH_POLICY.version}:${tradingDate2}:day`;
-  const existing = (await db.select().from(autonomousResearchRuns).where(eq33(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
+  const existing = (await db.select().from(autonomousResearchRuns).where(eq34(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
   if (existing) return existing;
   try {
     await db.insert(autonomousResearchRuns).values({ tradingDate: tradingDate2, runKey, policyVersion: AUTONOMOUS_RESEARCH_POLICY.version, phase: "preparing", dataStatus: "pending" });
   } catch {
   }
-  const created = (await db.select().from(autonomousResearchRuns).where(eq33(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
+  const created = (await db.select().from(autonomousResearchRuns).where(eq34(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
   if (!created) throw new Error("\uC790\uB3D9 \uB9AC\uC11C\uCE58 \uC77C\uC77C \uC2E4\uD589\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
   return created;
 }
 async function claimTask(db, input) {
-  const existing = (await db.select().from(autonomousResearchTasks).where(eq33(autonomousResearchTasks.runKey, input.runKey)).limit(1))[0];
+  const existing = (await db.select().from(autonomousResearchTasks).where(eq34(autonomousResearchTasks.runKey, input.runKey)).limit(1))[0];
   const skip = getAutonomousTaskSkip(existing);
   if (skip) return { claimed: false, skip };
   try {
@@ -8077,7 +8396,7 @@ async function claimTask(db, input) {
   } catch {
     return { claimed: false, skip: "already-running" };
   }
-  const task = (await db.select().from(autonomousResearchTasks).where(eq33(autonomousResearchTasks.runKey, input.runKey)).limit(1))[0];
+  const task = (await db.select().from(autonomousResearchTasks).where(eq34(autonomousResearchTasks.runKey, input.runKey)).limit(1))[0];
   if (!task) throw new Error("\uC790\uB3D9 \uB9AC\uC11C\uCE58 \uC791\uC5C5\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
   return { claimed: true, task };
 }
@@ -8097,11 +8416,11 @@ async function autonomousResearchHandler(req, res, options = {}) {
     const claim = await claimTask(db, { runId: dailyRun.id, runKey, phase });
     if (!claim.claimed) return res.json({ ok: true, skipped: claim.skip, runKey, runId: dailyRun.id });
     const completeTask = async (input) => {
-      await db.update(autonomousResearchTasks).set({ ...input, completedAt: /* @__PURE__ */ new Date() }).where(eq33(autonomousResearchTasks.id, claim.task.id));
+      await db.update(autonomousResearchTasks).set({ ...input, completedAt: /* @__PURE__ */ new Date() }).where(eq34(autonomousResearchTasks.id, claim.task.id));
     };
     if (!isExternalResearchVerificationEnabled()) {
       const transition = getWaitingForDataTransition(externalVerificationPausedMessage);
-      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(autonomousResearchRuns.id, dailyRun.id));
+      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(autonomousResearchRuns.id, dailyRun.id));
       await completeTask({ status: "waiting_for_data", resultJson: transition.summary, lastError: transition.lastError });
       return res.json({ ok: true, waitingForData: true, runKey, reason: transition.lastError, externalCollection: "user-request-required" });
     }
@@ -8109,7 +8428,7 @@ async function autonomousResearchHandler(req, res, options = {}) {
     const broker = client.getStatus();
     if (!broker.fixedIpRegistered || !broker.hasCredentials) {
       const transition = getWaitingForDataTransition(!broker.fixedIpRegistered ? "\uD0A4\uC6C0 \uC9C0\uC815 \uB2E8\uB9D0 \uC778\uC99D \uB300\uAE30" : "\uD0A4\uC6C0 \uC11C\uBC84 \uC790\uACA9 \uC99D\uBA85 \uB300\uAE30");
-      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(autonomousResearchRuns.id, dailyRun.id));
+      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(autonomousResearchRuns.id, dailyRun.id));
       await completeTask({ status: "waiting_for_data", resultJson: transition.summary, lastError: transition.lastError });
       return res.json({ ok: true, waitingForData: true, runKey, reason: transition.lastError });
     }
@@ -8140,7 +8459,7 @@ async function autonomousResearchHandler(req, res, options = {}) {
         });
         const survivorFingerprints = selectAutonomousSurvivorFingerprints(scored.map((item) => ({ fingerprint: item.candidate.fingerprint, fitnessScore: item.inSample.fitnessScore })));
         await db.insert(autonomousResearchCandidates).values(scored.map((item) => ({ runId: dailyRun.id, fingerprint: item.candidate.fingerprint, rootGenomeJson: item.candidate.root, minimumScore: item.candidate.minimumScore, status: survivorFingerprints.has(item.candidate.fingerprint) ? "survived" : "rejected", inSampleMetricsJson: { metrics: item.inSample.metrics, symbols: item.inSample.results.map((result) => result.symbol), assumptions: { policyVersion: AUTONOMOUS_RESEARCH_POLICY.version } }, outOfSampleMetricsJson: { metrics: item.outOfSample.metrics, symbols: item.outOfSample.results.map((result) => result.symbol), split: "tail-30-percent" }, fitnessScore: String(item.inSample.fitnessScore), evaluatedAt: /* @__PURE__ */ new Date() })));
-        const survivorRows = await db.select().from(autonomousResearchCandidates).where(and23(eq33(autonomousResearchCandidates.runId, dailyRun.id), eq33(autonomousResearchCandidates.status, "survived")));
+        const survivorRows = await db.select().from(autonomousResearchCandidates).where(and24(eq34(autonomousResearchCandidates.runId, dailyRun.id), eq34(autonomousResearchCandidates.status, "survived")));
         const universeBySymbol = new Map(universe.map((item) => [item.symbol, item]));
         for (const candidate of survivorRows) {
           const entries = eligibleSymbols.flatMap((symbol) => {
@@ -8150,13 +8469,13 @@ async function autonomousResearchHandler(req, res, options = {}) {
             return [{ symbol, name: current.name, entryPrice: Math.round(current.price), entryAt: (/* @__PURE__ */ new Date()).toISOString(), evidence: { score: evaluation.score, matchedRuleCount: evaluation.evaluations.filter((item) => item.matched).length, details: evaluation.evaluations.filter((item) => item.matched).slice(0, 5).map((item) => item.detail) } }];
           });
           const simulation = { status: entries.length ? "tracking" : "not_entered", entries, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-          await db.update(autonomousResearchCandidates).set({ simulationJson: simulation }).where(eq33(autonomousResearchCandidates.id, candidate.id));
+          await db.update(autonomousResearchCandidates).set({ simulationJson: simulation }).where(eq34(autonomousResearchCandidates.id, candidate.id));
           if (entries.length) await db.insert(autonomousResearchObservations).values(entries.map((entry) => ({ runId: dailyRun.id, candidateId: candidate.id, symbol: entry.symbol, name: entry.name, price: entry.entryPrice, source: "kiwoom_ka10032_entry" })));
         }
         candidateSummary = { generatedCandidates: generated.length, evaluatedSymbols: eligibleSymbols.length, survivorCount: survivorFingerprints.size };
       }
       if (phase === "intraday" || phase === "closing") {
-        const trackingCandidates = await db.select().from(autonomousResearchCandidates).where(and23(eq33(autonomousResearchCandidates.runId, dailyRun.id), eq33(autonomousResearchCandidates.status, "survived")));
+        const trackingCandidates = await db.select().from(autonomousResearchCandidates).where(and24(eq34(autonomousResearchCandidates.runId, dailyRun.id), eq34(autonomousResearchCandidates.status, "survived")));
         const priceBySymbol = new Map(universe.map((item) => [item.symbol, item]));
         let trackedPositions = 0;
         for (const candidate of trackingCandidates) {
@@ -8169,19 +8488,19 @@ async function autonomousResearchHandler(req, res, options = {}) {
             return phase === "closing" ? { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: (/* @__PURE__ */ new Date()).toISOString(), returnPercent, exitPrice: Math.round(latest.price), exitAt: (/* @__PURE__ */ new Date()).toISOString() } : { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: (/* @__PURE__ */ new Date()).toISOString(), returnPercent };
           });
           const next = { status: phase === "closing" ? "closed" : simulation.status, entries, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-          await db.update(autonomousResearchCandidates).set({ simulationJson: next }).where(eq33(autonomousResearchCandidates.id, candidate.id));
+          await db.update(autonomousResearchCandidates).set({ simulationJson: next }).where(eq34(autonomousResearchCandidates.id, candidate.id));
           const observed = entries.filter((entry) => entry.lastPrice !== void 0).map((entry) => ({ runId: dailyRun.id, candidateId: candidate.id, symbol: entry.symbol, name: entry.name, price: entry.lastPrice, changeRate: String(entry.returnPercent ?? 0), source: phase === "closing" ? "kiwoom_ka10032_exit" : "kiwoom_ka10032_tracking" }));
           if (observed.length) await db.insert(autonomousResearchObservations).values(observed);
           trackedPositions += entries.length;
         }
-        const updatedSurvivors = await db.select().from(autonomousResearchCandidates).where(and23(eq33(autonomousResearchCandidates.runId, dailyRun.id), eq33(autonomousResearchCandidates.status, "survived")));
+        const updatedSurvivors = await db.select().from(autonomousResearchCandidates).where(and24(eq34(autonomousResearchCandidates.runId, dailyRun.id), eq34(autonomousResearchCandidates.status, "survived")));
         const dayTradeExperiment = await persistDayTradeExperiment({ run: dailyRun, candidates: updatedSurvivors, isClosing: phase === "closing" });
         candidateSummary = { ...candidateSummary, trackedPositions, dayTradeExperiment };
       }
       if (phase === "closing") {
         const [survivors, storedBars] = await Promise.all([
-          db.select().from(autonomousResearchCandidates).where(and23(eq33(autonomousResearchCandidates.runId, dailyRun.id), eq33(autonomousResearchCandidates.status, "survived"))).orderBy(desc26(autonomousResearchCandidates.fitnessScore)),
-          db.select().from(autonomousResearchBars).where(eq33(autonomousResearchBars.runId, dailyRun.id))
+          db.select().from(autonomousResearchCandidates).where(and24(eq34(autonomousResearchCandidates.runId, dailyRun.id), eq34(autonomousResearchCandidates.status, "survived"))).orderBy(desc27(autonomousResearchCandidates.fitnessScore)),
+          db.select().from(autonomousResearchBars).where(eq34(autonomousResearchBars.runId, dailyRun.id))
         ]);
         const barsBySymbol = storedBars.reduce((all, bar) => {
           (all[bar.symbol] ??= []).push({ date: bar.date, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: Number(bar.volume), turnover: Number(bar.turnover) });
@@ -8194,18 +8513,18 @@ async function autonomousResearchHandler(req, res, options = {}) {
           const totalReturn = folds.reduce((sum, item) => sum + item.totalReturn, 0) / folds.length;
           const maxDrawdown = folds.reduce((sum, item) => sum + item.worstFoldDrawdown, 0) / folds.length;
           const tradeCount = folds.reduce((sum, item) => sum + item.tradeCount, 0);
-          await db.update(autonomousResearchCandidates).set({ walkForwardMetricsJson: { configuration: { trainingDays: 60, validationDays: 20, stepDays: 20 }, metrics: { totalReturn, maxDrawdown, tradeCount }, foldCount: folds.length } }).where(eq33(autonomousResearchCandidates.id, candidate.id));
+          await db.update(autonomousResearchCandidates).set({ walkForwardMetricsJson: { configuration: { trainingDays: 60, validationDays: 20, stepDays: 20 }, metrics: { totalReturn, maxDrawdown, tradeCount }, foldCount: folds.length } }).where(eq34(autonomousResearchCandidates.id, candidate.id));
           walkForwardCount += 1;
         }
         candidateSummary = { ...candidateSummary, walkForwardCandidates: walkForwardCount, survivedCandidates: survivors.length };
       }
       const summary = { phase, runKey, universeSize: universe.length, observedSymbols: universe.map((item) => item.symbol), policyVersion: AUTONOMOUS_RESEARCH_POLICY.version, ...candidateSummary };
-      await db.update(autonomousResearchRuns).set({ phase: phase === "closing" ? "completed" : phase, dataStatus: "ready", universeJson: universe.map((item) => ({ symbol: item.symbol, name: item.name })), summaryJson: summary, lastError: null, lastObservedAt: /* @__PURE__ */ new Date(), ...phase === "closing" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(eq33(autonomousResearchRuns.id, dailyRun.id));
+      await db.update(autonomousResearchRuns).set({ phase: phase === "closing" ? "completed" : phase, dataStatus: "ready", universeJson: universe.map((item) => ({ symbol: item.symbol, name: item.name })), summaryJson: summary, lastError: null, lastObservedAt: /* @__PURE__ */ new Date(), ...phase === "closing" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(eq34(autonomousResearchRuns.id, dailyRun.id));
       await completeTask({ status: "completed", resultJson: summary });
       return res.json({ ok: true, runId: dailyRun.id, runKey, phase, observed: universe.length });
     } catch (error) {
       const transition = getWaitingForDataTransition(error instanceof Error ? error.message : "\uC790\uB3D9 \uB9AC\uC11C\uCE58 \uB370\uC774\uD130 \uC218\uC9D1\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.");
-      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq33(autonomousResearchRuns.id, dailyRun.id));
+      await db.update(autonomousResearchRuns).set({ ...transition, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(autonomousResearchRuns.id, dailyRun.id));
       await completeTask({ status: "waiting_for_data", resultJson: transition.summary, lastError: transition.lastError });
       return res.json({ ok: true, waitingForData: true, runKey, reason: transition.lastError });
     }
@@ -8215,17 +8534,17 @@ async function autonomousResearchHandler(req, res, options = {}) {
 }
 
 // server/scheduled/researchGovernance.ts
-import { and as and24, desc as desc27, eq as eq34, like as like5 } from "drizzle-orm";
+import { and as and25, desc as desc28, eq as eq35, like as like5 } from "drizzle-orm";
 async function researchGovernanceHandler(req, res) {
   try {
     const user = await sdk.authenticateRequest(req);
     if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "database-unavailable", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
-    const schedule = (await db.select().from(researchGovernanceSchedules).where(and24(eq34(researchGovernanceSchedules.taskUid, user.taskUid), eq34(researchGovernanceSchedules.isEnabled, true))).limit(1))[0];
+    const schedule = (await db.select().from(researchGovernanceSchedules).where(and25(eq35(researchGovernanceSchedules.taskUid, user.taskUid), eq35(researchGovernanceSchedules.isEnabled, true))).limit(1))[0];
     if (!schedule) return res.json({ ok: true, skipped: "unknown-or-disabled-schedule" });
-    await db.update(researchGovernanceSchedules).set({ lastRequestedAt: /* @__PURE__ */ new Date(), lastError: null }).where(eq34(researchGovernanceSchedules.id, schedule.id));
-    const latestActualRun = (await db.select().from(autonomousResearchRuns).where(and24(eq34(autonomousResearchRuns.dataStatus, "ready"), eq34(autonomousResearchRuns.phase, "completed"), like5(autonomousResearchRuns.runKey, "%:day"))).orderBy(desc27(autonomousResearchRuns.updatedAt)).limit(1))[0];
+    await db.update(researchGovernanceSchedules).set({ lastRequestedAt: /* @__PURE__ */ new Date(), lastError: null }).where(eq35(researchGovernanceSchedules.id, schedule.id));
+    const latestActualRun = (await db.select().from(autonomousResearchRuns).where(and25(eq35(autonomousResearchRuns.dataStatus, "ready"), eq35(autonomousResearchRuns.phase, "completed"), like5(autonomousResearchRuns.runKey, "%:day"))).orderBy(desc28(autonomousResearchRuns.updatedAt)).limit(1))[0];
     if (!latestActualRun) return res.json({ ok: true, skipped: "completed-actual-daily-run-not-found" });
     const committee = await runResearchCommittee(latestActualRun.id);
     if (committee.report?.status !== "completed") {
@@ -8233,7 +8552,7 @@ async function researchGovernanceHandler(req, res) {
     }
     const result = await runResearchGovernanceCycle();
     if ("skipped" in result) return res.json({ ok: true, ...result });
-    await db.update(researchGovernanceSchedules).set({ latestCycleId: result.cycle.id }).where(eq34(researchGovernanceSchedules.id, schedule.id));
+    await db.update(researchGovernanceSchedules).set({ latestCycleId: result.cycle.id }).where(eq35(researchGovernanceSchedules.id, schedule.id));
     return res.json({ ok: true, cycleId: result.cycle.id, reused: result.reused });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -8271,7 +8590,7 @@ var trpcJsonFallback = (_req, res) => {
 // server/localResearchNode.ts
 import { timingSafeEqual } from "crypto";
 import { createHash as createHash7 } from "node:crypto";
-import { and as and25, asc as asc8, count as count2, desc as desc28, eq as eq35, inArray as inArray9, like as like6, ne, sql as sql4 } from "drizzle-orm";
+import { and as and26, asc as asc9, count as count2, desc as desc29, eq as eq36, inArray as inArray9, like as like6, ne, sql as sql4 } from "drizzle-orm";
 var RESEARCH_NODE_TOKEN_HEADER = "x-research-node-token";
 var TERMINAL_CONNECTION_HANDLER_VERSION = "terminal-sync-owner-fallback-v2";
 function normalizeTerminalConnectionVerification2(value) {
@@ -8569,17 +8888,17 @@ function closeIntradayCandidateSimulation(simulationJson, capturedAt) {
   };
 }
 async function ensureLocalIntradayExperiment(db, tradingDate2) {
-  await db.update(dayTradeExperiments).set({ status: "closed", closedAt: /* @__PURE__ */ new Date() }).where(and25(eq35(dayTradeExperiments.status, "tracking"), ne(dayTradeExperiments.tradingDate, tradingDate2)));
-  const [closed] = await db.select().from(dayTradeExperiments).where(and25(eq35(dayTradeExperiments.status, "closed"), eq35(dayTradeExperiments.tradingDate, tradingDate2))).orderBy(desc28(dayTradeExperiments.updatedAt)).limit(1);
+  await db.update(dayTradeExperiments).set({ status: "closed", closedAt: /* @__PURE__ */ new Date() }).where(and26(eq36(dayTradeExperiments.status, "tracking"), ne(dayTradeExperiments.tradingDate, tradingDate2)));
+  const [closed] = await db.select().from(dayTradeExperiments).where(and26(eq36(dayTradeExperiments.status, "closed"), eq36(dayTradeExperiments.tradingDate, tradingDate2))).orderBy(desc29(dayTradeExperiments.updatedAt)).limit(1);
   if (closed) return closed;
-  const [existing] = await db.select().from(dayTradeExperiments).where(and25(eq35(dayTradeExperiments.status, "tracking"), eq35(dayTradeExperiments.tradingDate, tradingDate2))).orderBy(desc28(dayTradeExperiments.updatedAt)).limit(1);
-  const minuteRows = await db.select().from(intradayMinuteBars).where(eq35(intradayMinuteBars.tradingDate, tradingDate2)).orderBy(asc8(intradayMinuteBars.minuteAt));
+  const [existing] = await db.select().from(dayTradeExperiments).where(and26(eq36(dayTradeExperiments.status, "tracking"), eq36(dayTradeExperiments.tradingDate, tradingDate2))).orderBy(desc29(dayTradeExperiments.updatedAt)).limit(1);
+  const minuteRows = await db.select().from(intradayMinuteBars).where(eq36(intradayMinuteBars.tradingDate, tradingDate2)).orderBy(asc9(intradayMinuteBars.minuteAt));
   if (getLocalIntradayBootstrapState({ minuteBarCount: minuteRows.length, sourceCandidateCount: 1, dailySymbolCount: 1 }) !== "ready") return null;
-  const sourceRun = (await db.select().from(autonomousResearchRuns).where(and25(eq35(autonomousResearchRuns.dataStatus, "ready"), like6(autonomousResearchRuns.runKey, "%:historical%"))).orderBy(desc28(autonomousResearchRuns.updatedAt)).limit(1))[0];
+  const sourceRun = (await db.select().from(autonomousResearchRuns).where(and26(eq36(autonomousResearchRuns.dataStatus, "ready"), like6(autonomousResearchRuns.runKey, "%:historical%"))).orderBy(desc29(autonomousResearchRuns.updatedAt)).limit(1))[0];
   if (!sourceRun) return null;
-  const sourceCandidates = await db.select().from(autonomousResearchCandidates).where(and25(eq35(autonomousResearchCandidates.runId, sourceRun.id), eq35(autonomousResearchCandidates.status, "survived"))).orderBy(desc28(autonomousResearchCandidates.fitnessScore));
+  const sourceCandidates = await db.select().from(autonomousResearchCandidates).where(and26(eq36(autonomousResearchCandidates.runId, sourceRun.id), eq36(autonomousResearchCandidates.status, "survived"))).orderBy(desc29(autonomousResearchCandidates.fitnessScore));
   if (getLocalIntradayBootstrapState({ minuteBarCount: minuteRows.length, sourceCandidateCount: sourceCandidates.length, dailySymbolCount: 1 }) !== "ready") return null;
-  const dailyRows = await db.select().from(autonomousResearchBars).where(eq35(autonomousResearchBars.runId, sourceRun.id)).orderBy(asc8(autonomousResearchBars.symbol), asc8(autonomousResearchBars.date));
+  const dailyRows = await db.select().from(autonomousResearchBars).where(eq36(autonomousResearchBars.runId, sourceRun.id)).orderBy(asc9(autonomousResearchBars.symbol), asc9(autonomousResearchBars.date));
   const dailyBySymbol = dailyRows.reduce((all, bar) => {
     (all[bar.symbol] ??= []).push({ date: bar.date, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: Number(bar.volume), turnover: Number(bar.turnover) });
     return all;
@@ -8592,10 +8911,10 @@ async function ensureLocalIntradayExperiment(db, tradingDate2) {
     return all;
   }, /* @__PURE__ */ new Map());
   const runKey = `autonomous-v1:${tradingDate2}:local-intraday`;
-  let run = existing ? (await db.select().from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.id, existing.runId)).limit(1))[0] : (await db.select().from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
+  let run = existing ? (await db.select().from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.id, existing.runId)).limit(1))[0] : (await db.select().from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
   if (!run) {
     await db.insert(autonomousResearchRuns).values({ tradingDate: tradingDate2, runKey, policyVersion: sourceRun.policyVersion, phase: "intraday", dataStatus: "ready", universeJson: sourceRun.universeJson, summaryJson: { mode: "local_intraday_from_historical_survivors", sourceRunId: sourceRun.id, minuteSource: "kiwoom_ka10080" }, lastObservedAt: /* @__PURE__ */ new Date() });
-    run = (await db.select().from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
+    run = (await db.select().from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.runKey, runKey)).limit(1))[0];
   }
   if (!run) return null;
   const names = getStoredUniverseNames(sourceRun.universeJson);
@@ -8616,24 +8935,24 @@ async function ensureLocalIntradayExperiment(db, tradingDate2) {
       set: { simulationJson: simulation, updatedAt: now }
     });
   }
-  const candidates = await db.select().from(autonomousResearchCandidates).where(and25(eq35(autonomousResearchCandidates.runId, run.id), eq35(autonomousResearchCandidates.status, "survived")));
+  const candidates = await db.select().from(autonomousResearchCandidates).where(and26(eq36(autonomousResearchCandidates.runId, run.id), eq36(autonomousResearchCandidates.status, "survived")));
   await persistDayTradeExperiment({ run, candidates, isClosing: false });
-  return (await db.select().from(dayTradeExperiments).where(and25(eq35(dayTradeExperiments.runId, run.id), eq35(dayTradeExperiments.status, "tracking"))).limit(1))[0] ?? null;
+  return (await db.select().from(dayTradeExperiments).where(and26(eq36(dayTradeExperiments.runId, run.id), eq36(dayTradeExperiments.status, "tracking"))).limit(1))[0] ?? null;
 }
 async function closeLocalIntradayExperimentAtMarketClose(db, input) {
   if (!shouldCloseIntradayExperiment(input)) return null;
-  const [experiment] = await db.select().from(dayTradeExperiments).where(and25(eq35(dayTradeExperiments.status, "tracking"), eq35(dayTradeExperiments.tradingDate, input.tradingDate))).orderBy(desc28(dayTradeExperiments.updatedAt)).limit(1);
+  const [experiment] = await db.select().from(dayTradeExperiments).where(and26(eq36(dayTradeExperiments.status, "tracking"), eq36(dayTradeExperiments.tradingDate, input.tradingDate))).orderBy(desc29(dayTradeExperiments.updatedAt)).limit(1);
   if (!experiment) return null;
-  const [run] = await db.select().from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.id, experiment.runId)).limit(1);
+  const [run] = await db.select().from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.id, experiment.runId)).limit(1);
   if (!run) return null;
-  const candidates = await db.select().from(autonomousResearchCandidates).where(and25(eq35(autonomousResearchCandidates.runId, run.id), eq35(autonomousResearchCandidates.status, "survived")));
+  const candidates = await db.select().from(autonomousResearchCandidates).where(and26(eq36(autonomousResearchCandidates.runId, run.id), eq36(autonomousResearchCandidates.status, "survived")));
   for (const candidate of candidates) {
-    await db.update(autonomousResearchCandidates).set({ simulationJson: closeIntradayCandidateSimulation(candidate.simulationJson, input.capturedAt), updatedAt: input.capturedAt }).where(eq35(autonomousResearchCandidates.id, candidate.id));
+    await db.update(autonomousResearchCandidates).set({ simulationJson: closeIntradayCandidateSimulation(candidate.simulationJson, input.capturedAt), updatedAt: input.capturedAt }).where(eq36(autonomousResearchCandidates.id, candidate.id));
   }
-  const closedCandidates = await db.select().from(autonomousResearchCandidates).where(and25(eq35(autonomousResearchCandidates.runId, run.id), eq35(autonomousResearchCandidates.status, "survived")));
-  await db.update(autonomousResearchRuns).set({ phase: "completed", lastObservedAt: input.capturedAt }).where(eq35(autonomousResearchRuns.id, run.id));
+  const closedCandidates = await db.select().from(autonomousResearchCandidates).where(and26(eq36(autonomousResearchCandidates.runId, run.id), eq36(autonomousResearchCandidates.status, "survived")));
+  await db.update(autonomousResearchRuns).set({ phase: "completed", lastObservedAt: input.capturedAt }).where(eq36(autonomousResearchRuns.id, run.id));
   await persistDayTradeExperiment({ run, candidates: closedCandidates, isClosing: true });
-  return (await db.select().from(dayTradeExperiments).where(eq35(dayTradeExperiments.id, experiment.id)).limit(1))[0] ?? null;
+  return (await db.select().from(dayTradeExperiments).where(eq36(dayTradeExperiments.id, experiment.id)).limit(1))[0] ?? null;
 }
 function isLocalResearchNodeAuthorized(request) {
   const expected = process.env.LOCAL_RESEARCH_NODE_TOKEN?.trim();
@@ -8687,9 +9006,9 @@ function registerLocalResearchNodeRoutes(app2) {
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const ownerOpenId = process.env.OWNER_OPEN_ID?.trim();
-    let owner = ownerOpenId ? (await db.select({ id: users.id }).from(users).where(eq35(users.openId, ownerOpenId)).limit(1))[0] : null;
+    let owner = ownerOpenId ? (await db.select({ id: users.id }).from(users).where(eq36(users.openId, ownerOpenId)).limit(1))[0] : null;
     if (!owner) {
-      const adminCandidates = await db.select({ id: users.id }).from(users).where(eq35(users.role, "admin")).limit(2);
+      const adminCandidates = await db.select({ id: users.id }).from(users).where(eq36(users.role, "admin")).limit(2);
       owner = adminCandidates.length === 1 ? adminCandidates[0] : null;
     }
     if (!owner) return response.status(409).json({ status: "owner_not_ready", handlerVersion: TERMINAL_CONNECTION_HANDLER_VERSION, message: "\uB2E8\uB9D0 \uC778\uC99D \uACB0\uACFC\uB97C \uC5F0\uACB0\uD560 \uC18C\uC720\uC790 \uACC4\uC815\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uC18C\uC720\uC790 \uC124\uC815 \uB610\uB294 \uB2E8\uC77C \uC6B4\uC601\uC790 \uACC4\uC815\uC744 \uD655\uC778\uD558\uC138\uC694." });
@@ -8705,13 +9024,13 @@ function registerLocalResearchNodeRoutes(app2) {
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const ownerOpenId = process.env.OWNER_OPEN_ID?.trim();
-    let owner = ownerOpenId ? (await db.select({ id: users.id }).from(users).where(eq35(users.openId, ownerOpenId)).limit(1))[0] : null;
+    let owner = ownerOpenId ? (await db.select({ id: users.id }).from(users).where(eq36(users.openId, ownerOpenId)).limit(1))[0] : null;
     if (!owner) {
-      const adminCandidates = await db.select({ id: users.id }).from(users).where(eq35(users.role, "admin")).limit(2);
+      const adminCandidates = await db.select({ id: users.id }).from(users).where(eq36(users.role, "admin")).limit(2);
       owner = adminCandidates.length === 1 ? adminCandidates[0] : null;
     }
     if (!owner) return response.status(409).json({ status: "owner_not_ready", handlerVersion: TERMINAL_CONNECTION_HANDLER_VERSION });
-    const check = (await db.select({ terminalIp: kiwoomTerminalConnectionChecks.terminalIp, status: kiwoomTerminalConnectionChecks.status, errorCode: kiwoomTerminalConnectionChecks.errorCode, message: kiwoomTerminalConnectionChecks.message, verificationJson: kiwoomTerminalConnectionChecks.verificationJson, checkedAt: kiwoomTerminalConnectionChecks.checkedAt }).from(kiwoomTerminalConnectionChecks).where(and25(eq35(kiwoomTerminalConnectionChecks.userId, owner.id), eq35(kiwoomTerminalConnectionChecks.terminalIp, terminalIp))).orderBy(desc28(kiwoomTerminalConnectionChecks.checkedAt)).limit(1))[0] ?? null;
+    const check = (await db.select({ terminalIp: kiwoomTerminalConnectionChecks.terminalIp, status: kiwoomTerminalConnectionChecks.status, errorCode: kiwoomTerminalConnectionChecks.errorCode, message: kiwoomTerminalConnectionChecks.message, verificationJson: kiwoomTerminalConnectionChecks.verificationJson, checkedAt: kiwoomTerminalConnectionChecks.checkedAt }).from(kiwoomTerminalConnectionChecks).where(and26(eq36(kiwoomTerminalConnectionChecks.userId, owner.id), eq36(kiwoomTerminalConnectionChecks.terminalIp, terminalIp))).orderBy(desc29(kiwoomTerminalConnectionChecks.checkedAt)).limit(1))[0] ?? null;
     if (!check) return response.status(404).json({ status: "not_found", terminalIp });
     const verification = normalizeTerminalConnectionVerification2(check.verificationJson);
     return response.json({ status: "recorded", handlerVersion: TERMINAL_CONNECTION_HANDLER_VERSION, terminalIp: check.terminalIp, connection: check.status, verification, roundTripVerified: check.status === "connected" && isTerminalRoundTripVerified2(verification), checkedAt: check.checkedAt });
@@ -8721,9 +9040,9 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const [experiment] = await db.select().from(dayTradeExperiments).where(eq35(dayTradeExperiments.status, "tracking")).orderBy(desc28(dayTradeExperiments.updatedAt)).limit(1);
+    const [experiment] = await db.select().from(dayTradeExperiments).where(eq36(dayTradeExperiments.status, "tracking")).orderBy(desc29(dayTradeExperiments.updatedAt)).limit(1);
     if (!experiment) return response.status(409).json({ status: "waiting_for_data", message: "\uCD94\uC801 \uC911\uC778 \uC7A5\uC911 \uBAA8\uC758\uD22C\uC790 \uAE30\uB85D\uC774 \uC544\uC9C1 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const positions = await db.select({ symbol: dayTradeExperimentPositions.symbol, name: dayTradeExperimentPositions.name }).from(dayTradeExperimentPositions).where(eq35(dayTradeExperimentPositions.experimentId, experiment.id));
+    const positions = await db.select({ symbol: dayTradeExperimentPositions.symbol, name: dayTradeExperimentPositions.name }).from(dayTradeExperimentPositions).where(eq36(dayTradeExperimentPositions.experimentId, experiment.id));
     return response.json({ status: "ready", mode: "read_only_intraday_price_collection", experimentId: experiment.id, tradingDate: experiment.tradingDate, quotes: positions.map((position) => ({ symbol: position.symbol, name: position.name })) });
   });
   app2.get("/api/local-research-node/daily-bar-collection-plan", async (request, response) => {
@@ -8731,7 +9050,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc28(autonomousResearchRuns.updatedAt)).limit(40);
+    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc29(autonomousResearchRuns.updatedAt)).limit(40);
     const symbols = selectLocalDailyCollectionUniverse(runs, 20);
     if (!symbols.length) return response.status(409).json({ status: "waiting_for_universe", message: "\uC2E4\uC81C \uC77C\uBD09 \uC218\uC9D1\uC5D0 \uC0AC\uC6A9\uD560 \uC800\uC7A5 \uC5F0\uAD6C \uC720\uB2C8\uBC84\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." });
     return response.json({ status: "ready", mode: "scheduled_daily_collection", adjustmentBasis: "adjusted", symbols });
@@ -8741,9 +9060,9 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const queued = (await db.select().from(sharedDatasetCollectionRequests).where(eq35(sharedDatasetCollectionRequests.status, "queued")).orderBy(desc28(sharedDatasetCollectionRequests.requestedAt)).limit(1))[0];
+    const queued = (await db.select().from(sharedDatasetCollectionRequests).where(eq36(sharedDatasetCollectionRequests.status, "queued")).orderBy(desc29(sharedDatasetCollectionRequests.requestedAt)).limit(1))[0];
     if (!queued) return response.status(409).json({ status: "idle", message: "\uC5F0\uACB0 \uC2DC \uCC98\uB9AC\uD560 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B \uC218\uC9D1 \uC694\uCCAD\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    await db.update(sharedDatasetCollectionRequests).set({ status: "running", startedAt: /* @__PURE__ */ new Date(), lastError: null, progressJson: { stage: "accepted", message: "\uC9C0\uC815 \uB2E8\uB9D0 \uC218\uC9D1\uAE30\uAC00 \uC694\uCCAD\uC744 \uC811\uC218\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: queued.symbolCount, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }).where(eq35(sharedDatasetCollectionRequests.id, queued.id));
+    await db.update(sharedDatasetCollectionRequests).set({ status: "running", startedAt: /* @__PURE__ */ new Date(), lastError: null, progressJson: { stage: "accepted", message: "\uC9C0\uC815 \uB2E8\uB9D0 \uC218\uC9D1\uAE30\uAC00 \uC694\uCCAD\uC744 \uC811\uC218\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: queued.symbolCount, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }).where(eq36(sharedDatasetCollectionRequests.id, queued.id));
     return response.json({ status: "ready", mode: "manual_shared_dataset_read_only_collection", request: { id: queued.id, randomSeed: queued.randomSeed, symbolCount: queued.symbolCount, sampleDays: queued.sampleDays, requestFingerprint: queued.requestFingerprint, resumeCount: queued.resumeCount, requestedByUserId: queued.requestedByUserId } });
   });
   app2.post("/api/local-research-node/shared-dataset-collection-sync", async (request, response) => {
@@ -8760,15 +9079,15 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1 || !Array.isArray(body?.dailyBars) || !Array.isArray(body?.fiveMinuteBars) || !universe.length) return response.status(400).json({ status: "invalid_request", message: "requestId, universe, dailyBars, fiveMinuteBars\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(eq35(sharedDatasetCollectionRequests.id, requestId)).limit(1))[0];
+    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(eq36(sharedDatasetCollectionRequests.id, requestId)).limit(1))[0];
     if (!collection || collection.status !== "running") return response.status(409).json({ status: "invalid_request_state", message: "\uC2E4\uD589 \uC911\uC778 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B \uC218\uC9D1 \uC694\uCCAD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     if (new Set(universe.map((item) => item.symbol)).size !== universe.length || universe.length !== collection.symbolCount) return response.status(400).json({ status: "invalid_universe", message: "\uC218\uC9D1 \uC694\uCCAD\uC758 \uC885\uBAA9 \uC218\uC640 \uB3D9\uAE30\uD654 \uC720\uB2C8\uBC84\uC2A4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." });
     const selected = selectSharedCollectionPayload({ universe, dailyBars: body.dailyBars, fiveMinuteBars: body.fiveMinuteBars, sampleDays: collection.sampleDays, randomSeed: collection.randomSeed });
     if ("error" in selected) return response.status(400).json({ status: "invalid_source_data", message: selected.error });
     const sourceFingerprint = createHash7("sha256").update(JSON.stringify({ source: ["kiwoom_ka10081", "kiwoom_ka10080"], universe, window: selected.window, daily: selected.selectedDailyBars, fiveMinute: selected.selectedFiveMinuteBars.map((bar) => ({ ...bar, intervalAt: bar.intervalAt.toISOString() })) })).digest("hex");
-    const existing = (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.sourceFingerprint, sourceFingerprint), eq35(researchDatasets.visibility, "shared_public"), eq35(researchDatasets.qualityStatus, "ready"))).limit(1))[0];
+    const existing = (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.sourceFingerprint, sourceFingerprint), eq36(researchDatasets.visibility, "shared_public"), eq36(researchDatasets.qualityStatus, "ready"))).limit(1))[0];
     if (existing) {
-      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: existing.id, plannedUniverseJson: universe, acceptedDailyBarCount: existing.barCount, acceptedFiveMinuteBarCount: existing.minuteBarCount, progressJson: { stage: "completed", message: "\uAC19\uC740 \uC6D0\uBCF8\uC744 \uCC3E\uC544 \uAE30\uC874 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B\uC744 \uC7AC\uC0AC\uC6A9\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(eq35(sharedDatasetCollectionRequests.id, collection.id));
+      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: existing.id, plannedUniverseJson: universe, acceptedDailyBarCount: existing.barCount, acceptedFiveMinuteBarCount: existing.minuteBarCount, progressJson: { stage: "completed", message: "\uAC19\uC740 \uC6D0\uBCF8\uC744 \uCC3E\uC544 \uAE30\uC874 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B\uC744 \uC7AC\uC0AC\uC6A9\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(eq36(sharedDatasetCollectionRequests.id, collection.id));
       return response.json({ status: "reused", requestId: collection.id, datasetId: existing.id, versionKey: existing.versionKey, sourceFingerprint });
     }
     const now = /* @__PURE__ */ new Date();
@@ -8777,13 +9096,13 @@ function registerLocalResearchNodeRoutes(app2) {
     try {
       for (let offset = 0; offset < selected.selectedDailyBars.length; offset += 200) await db.insert(researchDailyBars).values(selected.selectedDailyBars.slice(offset, offset + 200).map((bar) => ({ datasetId: created.id, symbol: bar.symbol, date: bar.date, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(bar.volume), turnover: String(bar.turnover), source: "kiwoom_ka10081_local_shared_snapshot" })));
       for (let offset = 0; offset < selected.selectedFiveMinuteBars.length; offset += 200) await db.insert(researchFiveMinuteBars).values(selected.selectedFiveMinuteBars.slice(offset, offset + 200).map((bar) => ({ datasetId: created.id, symbol: bar.symbol, tradingDate: bar.tradingDate, intervalAt: bar.intervalAt, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(bar.volume), source: "kiwoom_ka10080_local_shared_snapshot", rawFingerprint: createHash7("sha256").update(JSON.stringify({ ...bar, intervalAt: bar.intervalAt.toISOString() })).digest("hex") })));
-      await db.update(researchDatasets).set({ qualityStatus: "ready", readyAt: now, qualityReportJson: { state: "ready", source: ["kiwoom_ka10081", "kiwoom_ka10080"], sourceFingerprint, randomSeed: collection.randomSeed, sampleDays: collection.sampleDays, ...selected.window, universe, dailyBarCount: selected.selectedDailyBars.length, fiveMinuteBarCount: selected.selectedFiveMinuteBars.length, immutable: true, fixedIpSource: true, collectionRequestId: collection.id } }).where(eq35(researchDatasets.id, created.id));
-      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: created.id, plannedUniverseJson: universe, acceptedDailyBarCount: selected.selectedDailyBars.length, acceptedFiveMinuteBarCount: selected.selectedFiveMinuteBars.length, progressJson: { stage: "completed", message: "\uC77C\uBD09\xB75\uBD84\uBD09 \uC6D0\uBCF8\uC744 \uAC80\uC99D\uD574 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B \uBCF4\uAD00\uC18C\uC5D0 \uACE0\uC815\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: now.toISOString() }, completedAt: now }).where(eq35(sharedDatasetCollectionRequests.id, collection.id));
+      await db.update(researchDatasets).set({ qualityStatus: "ready", readyAt: now, qualityReportJson: { state: "ready", source: ["kiwoom_ka10081", "kiwoom_ka10080"], sourceFingerprint, randomSeed: collection.randomSeed, sampleDays: collection.sampleDays, ...selected.window, universe, dailyBarCount: selected.selectedDailyBars.length, fiveMinuteBarCount: selected.selectedFiveMinuteBars.length, immutable: true, fixedIpSource: true, collectionRequestId: collection.id } }).where(eq36(researchDatasets.id, created.id));
+      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: created.id, plannedUniverseJson: universe, acceptedDailyBarCount: selected.selectedDailyBars.length, acceptedFiveMinuteBarCount: selected.selectedFiveMinuteBars.length, progressJson: { stage: "completed", message: "\uC77C\uBD09\xB75\uBD84\uBD09 \uC6D0\uBCF8\uC744 \uAC80\uC99D\uD574 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B \uBCF4\uAD00\uC18C\uC5D0 \uACE0\uC815\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: now.toISOString() }, completedAt: now }).where(eq36(sharedDatasetCollectionRequests.id, collection.id));
       return response.json({ status: "ready", requestId: collection.id, datasetId: created.id, versionKey, sourceFingerprint, acceptedDailyBarCount: selected.selectedDailyBars.length, acceptedFiveMinuteBarCount: selected.selectedFiveMinuteBars.length });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : "\uACF5\uC6A9 \uC6D0\uBCF8 \uC2A4\uB0C5\uC0F7 \uC800\uC7A5 \uC2E4\uD328";
-      await db.update(researchDatasets).set({ qualityStatus: "error", qualityReportJson: { state: "error", sourceFingerprint, error: message } }).where(eq35(researchDatasets.id, created.id));
-      await db.update(sharedDatasetCollectionRequests).set({ status: "failed", lastError: message, completedAt: /* @__PURE__ */ new Date() }).where(eq35(sharedDatasetCollectionRequests.id, collection.id));
+      await db.update(researchDatasets).set({ qualityStatus: "error", qualityReportJson: { state: "error", sourceFingerprint, error: message } }).where(eq36(researchDatasets.id, created.id));
+      await db.update(sharedDatasetCollectionRequests).set({ status: "failed", lastError: message, completedAt: /* @__PURE__ */ new Date() }).where(eq36(sharedDatasetCollectionRequests.id, collection.id));
       return response.status(500).json({ status: "snapshot_failed", message });
     }
   });
@@ -8800,20 +9119,20 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1 || !window || !sourceFingerprint || !Number.isInteger(expectedDailyBarCount) || expectedDailyBarCount < universe.length || expectedDailyBarCount > 1e4 || !Number.isInteger(expectedFiveMinuteBarCount) || expectedFiveMinuteBarCount < universe.length || expectedFiveMinuteBarCount > 15e4 || !universe.length) return response.status(400).json({ status: "invalid_request", message: "requestId, universe, window, sourceFingerprint, \uC608\uC0C1 \uC6D0\uBCF8 \uD589 \uC218\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(eq35(sharedDatasetCollectionRequests.id, requestId)).limit(1))[0];
+    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(eq36(sharedDatasetCollectionRequests.id, requestId)).limit(1))[0];
     if (!collection || collection.status !== "running") return response.status(409).json({ status: "invalid_request_state", message: "\uC2E4\uD589 \uC911\uC778 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B \uC218\uC9D1 \uC694\uCCAD\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     if (new Set(universe.map((item) => item.symbol)).size !== universe.length || universe.length !== collection.symbolCount) return response.status(400).json({ status: "invalid_universe", message: "\uC218\uC9D1 \uC694\uCCAD\uC758 \uC885\uBAA9 \uC218\uC640 \uB3D9\uAE30\uD654 \uC720\uB2C8\uBC84\uC2A4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." });
-    const existingReady = (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.sourceFingerprint, sourceFingerprint), eq35(researchDatasets.visibility, "shared_public"), eq35(researchDatasets.qualityStatus, "ready"))).limit(1))[0];
+    const existingReady = (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.sourceFingerprint, sourceFingerprint), eq36(researchDatasets.visibility, "shared_public"), eq36(researchDatasets.qualityStatus, "ready"))).limit(1))[0];
     if (existingReady) {
-      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: existingReady.id, plannedUniverseJson: universe, acceptedDailyBarCount: existingReady.barCount, acceptedFiveMinuteBarCount: existingReady.minuteBarCount, progressJson: { stage: "completed", message: "\uAC19\uC740 \uC6D0\uBCF8\uC744 \uCC3E\uC544 \uAE30\uC874 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B\uC744 \uC7AC\uC0AC\uC6A9\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(eq35(sharedDatasetCollectionRequests.id, collection.id));
+      await db.update(sharedDatasetCollectionRequests).set({ status: "completed", datasetId: existingReady.id, plannedUniverseJson: universe, acceptedDailyBarCount: existingReady.barCount, acceptedFiveMinuteBarCount: existingReady.minuteBarCount, progressJson: { stage: "completed", message: "\uAC19\uC740 \uC6D0\uBCF8\uC744 \uCC3E\uC544 \uAE30\uC874 \uACF5\uC6A9 \uB370\uC774\uD130\uC14B\uC744 \uC7AC\uC0AC\uC6A9\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(eq36(sharedDatasetCollectionRequests.id, collection.id));
       return response.json({ status: "reused", requestId: collection.id, datasetId: existingReady.id, versionKey: existingReady.versionKey, sourceFingerprint });
     }
-    const attached = collection.datasetId ? (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.id, collection.datasetId), eq35(researchDatasets.qualityStatus, "collecting"))).limit(1))[0] : null;
+    const attached = collection.datasetId ? (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.id, collection.datasetId), eq36(researchDatasets.qualityStatus, "collecting"))).limit(1))[0] : null;
     if (attached) return response.json({ status: "uploading", requestId: collection.id, datasetId: attached.id, versionKey: attached.versionKey, sourceFingerprint });
     const now = /* @__PURE__ */ new Date();
     const versionKey = `shared-local-ka10081-ka10080:${window.startDate}:${window.endDate}:${sourceFingerprint.slice(0, 16)}`;
     const [created] = await db.insert(researchDatasets).values({ userId: collection.requestedByUserId, name: `\uACF5\uC6A9 \uB79C\uB364 \uC544\uB808\uB098 \xB7 ${universe.length}\uC885\uBAA9 \xB7 ${window.evaluationStartDate}~${window.endDate}`, source: "kiwoom_daily_five_minute", versionKey, visibility: "shared_public", randomSeed: collection.randomSeed, sourceFingerprint, universeJson: universe, startDate: window.startDate, endDate: window.endDate, barCount: 0, minuteBarCount: 0, adjustmentBasis: "adjusted", qualityStatus: "collecting", sourceCapturedAt: now, qualityReportJson: { state: "streaming", protocol: "chunked_v1", source: ["kiwoom_ka10081", "kiwoom_ka10080"], randomSeed: collection.randomSeed, sampleDays: collection.sampleDays, ...window, universe, expectedDailyBarCount, expectedFiveMinuteBarCount, collectionRequestId: collection.id, fixedIpSource: true } }).returning();
-    await db.update(sharedDatasetCollectionRequests).set({ datasetId: created.id, plannedUniverseJson: universe, progressJson: { stage: "stream_upload_start", message: "\uB300\uC6A9\uB7C9 \uC6D0\uBCF8\uC744 \uC7AC\uAC1C \uAC00\uB2A5\uD55C \uCCAD\uD06C\uB85C \uBCF4\uAD00\uC18C\uC5D0 \uC801\uC7AC\uD569\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: now.toISOString() } }).where(eq35(sharedDatasetCollectionRequests.id, collection.id));
+    await db.update(sharedDatasetCollectionRequests).set({ datasetId: created.id, plannedUniverseJson: universe, progressJson: { stage: "stream_upload_start", message: "\uB300\uC6A9\uB7C9 \uC6D0\uBCF8\uC744 \uC7AC\uAC1C \uAC00\uB2A5\uD55C \uCCAD\uD06C\uB85C \uBCF4\uAD00\uC18C\uC5D0 \uC801\uC7AC\uD569\uB2C8\uB2E4.", totalSymbols: universe.length, completedDailySymbols: universe.length, completedFiveMinuteSymbols: universe.length, updatedAt: now.toISOString() } }).where(eq36(sharedDatasetCollectionRequests.id, collection.id));
     return response.json({ status: "uploading", requestId: collection.id, datasetId: created.id, versionKey, sourceFingerprint });
   });
   app2.post("/api/local-research-node/shared-dataset-collection-stream-chunk", async (request, response) => {
@@ -8827,8 +9146,8 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1 || !Number.isInteger(datasetId) || datasetId < 1 || !kind || !submitted.length || submitted.length > 800) return response.status(400).json({ status: "invalid_request", message: "requestId, datasetId, kind, \uCD5C\uB300 800\uAC1C bars \uBC30\uC5F4\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(and25(eq35(sharedDatasetCollectionRequests.id, requestId), eq35(sharedDatasetCollectionRequests.datasetId, datasetId), eq35(sharedDatasetCollectionRequests.status, "running"))).limit(1))[0];
-    const dataset = (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.id, datasetId), eq35(researchDatasets.qualityStatus, "collecting"))).limit(1))[0];
+    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(and26(eq36(sharedDatasetCollectionRequests.id, requestId), eq36(sharedDatasetCollectionRequests.datasetId, datasetId), eq36(sharedDatasetCollectionRequests.status, "running"))).limit(1))[0];
+    const dataset = (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.id, datasetId), eq36(researchDatasets.qualityStatus, "collecting"))).limit(1))[0];
     if (!collection || !dataset) return response.status(409).json({ status: "invalid_request_state", message: "\uC7AC\uAC1C \uAC00\uB2A5\uD55C \uB300\uC6A9\uB7C9 \uC6D0\uBCF8 \uC801\uC7AC \uC0C1\uD0DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const report = dataset.qualityReportJson && typeof dataset.qualityReportJson === "object" ? dataset.qualityReportJson : {};
     const universe = normalizeSharedDatasetStreamUniverse(dataset.universeJson);
@@ -8880,20 +9199,20 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1 || !Number.isInteger(datasetId) || datasetId < 1) return response.status(400).json({ status: "invalid_request", message: "requestId\uC640 datasetId\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(and25(eq35(sharedDatasetCollectionRequests.id, requestId), eq35(sharedDatasetCollectionRequests.datasetId, datasetId), eq35(sharedDatasetCollectionRequests.status, "running"))).limit(1))[0];
-    const dataset = (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.id, datasetId), eq35(researchDatasets.qualityStatus, "collecting"))).limit(1))[0];
+    const collection = (await db.select().from(sharedDatasetCollectionRequests).where(and26(eq36(sharedDatasetCollectionRequests.id, requestId), eq36(sharedDatasetCollectionRequests.datasetId, datasetId), eq36(sharedDatasetCollectionRequests.status, "running"))).limit(1))[0];
+    const dataset = (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.id, datasetId), eq36(researchDatasets.qualityStatus, "collecting"))).limit(1))[0];
     if (!collection || !dataset) return response.status(409).json({ status: "invalid_request_state", message: "\uC644\uB8CC\uD560 \uB300\uC6A9\uB7C9 \uC6D0\uBCF8 \uC801\uC7AC \uC0C1\uD0DC\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const report = dataset.qualityReportJson && typeof dataset.qualityReportJson === "object" ? dataset.qualityReportJson : {};
     const expectedDailyBarCount = Number(report.expectedDailyBarCount);
     const expectedFiveMinuteBarCount = Number(report.expectedFiveMinuteBarCount);
-    const [daily] = await db.select({ total: count2() }).from(researchDailyBars).where(eq35(researchDailyBars.datasetId, datasetId));
-    const [minute] = await db.select({ total: count2() }).from(researchFiveMinuteBars).where(eq35(researchFiveMinuteBars.datasetId, datasetId));
+    const [daily] = await db.select({ total: count2() }).from(researchDailyBars).where(eq36(researchDailyBars.datasetId, datasetId));
+    const [minute] = await db.select({ total: count2() }).from(researchFiveMinuteBars).where(eq36(researchFiveMinuteBars.datasetId, datasetId));
     const dailyBarCount = Number(daily?.total ?? 0);
     const fiveMinuteBarCount = Number(minute?.total ?? 0);
     if (dailyBarCount !== expectedDailyBarCount || fiveMinuteBarCount !== expectedFiveMinuteBarCount) return response.status(409).json({ status: "incomplete_upload", message: "\uB300\uC6A9\uB7C9 \uC6D0\uBCF8 \uCCAD\uD06C\uAC00 \uBAA8\uB450 \uC800\uC7A5\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4. \uAC19\uC740 \uC694\uCCAD\uC744 \uC7AC\uAC1C\uD558\uC138\uC694.", dailyBarCount, fiveMinuteBarCount, expectedDailyBarCount, expectedFiveMinuteBarCount });
     const now = /* @__PURE__ */ new Date();
-    await db.update(researchDatasets).set({ barCount: dailyBarCount, minuteBarCount: fiveMinuteBarCount, qualityStatus: "ready", readyAt: now, qualityReportJson: { ...report, state: "ready", dailyBarCount, fiveMinuteBarCount, immutable: true, completedAt: now.toISOString() } }).where(eq35(researchDatasets.id, datasetId));
-    await db.update(sharedDatasetCollectionRequests).set({ status: "completed", acceptedDailyBarCount: dailyBarCount, acceptedFiveMinuteBarCount: fiveMinuteBarCount, progressJson: { stage: "completed", message: "\uB300\uC6A9\uB7C9 \uC77C\uBD09\xB75\uBD84\uBD09 \uC6D0\uBCF8\uC744 \uCCAD\uD06C \uAC80\uC99D \uD6C4 \uACF5\uC6A9 \uBCF4\uAD00\uC18C\uC5D0 \uACE0\uC815\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: collection.symbolCount, completedDailySymbols: collection.symbolCount, completedFiveMinuteSymbols: collection.symbolCount, updatedAt: now.toISOString() }, completedAt: now }).where(eq35(sharedDatasetCollectionRequests.id, requestId));
+    await db.update(researchDatasets).set({ barCount: dailyBarCount, minuteBarCount: fiveMinuteBarCount, qualityStatus: "ready", readyAt: now, qualityReportJson: { ...report, state: "ready", dailyBarCount, fiveMinuteBarCount, immutable: true, completedAt: now.toISOString() } }).where(eq36(researchDatasets.id, datasetId));
+    await db.update(sharedDatasetCollectionRequests).set({ status: "completed", acceptedDailyBarCount: dailyBarCount, acceptedFiveMinuteBarCount: fiveMinuteBarCount, progressJson: { stage: "completed", message: "\uB300\uC6A9\uB7C9 \uC77C\uBD09\xB75\uBD84\uBD09 \uC6D0\uBCF8\uC744 \uCCAD\uD06C \uAC80\uC99D \uD6C4 \uACF5\uC6A9 \uBCF4\uAD00\uC18C\uC5D0 \uACE0\uC815\uD588\uC2B5\uB2C8\uB2E4.", totalSymbols: collection.symbolCount, completedDailySymbols: collection.symbolCount, completedFiveMinuteSymbols: collection.symbolCount, updatedAt: now.toISOString() }, completedAt: now }).where(eq36(sharedDatasetCollectionRequests.id, requestId));
     return response.json({ status: "ready", requestId, datasetId, versionKey: dataset.versionKey, sourceFingerprint: dataset.sourceFingerprint, acceptedDailyBarCount: dailyBarCount, acceptedFiveMinuteBarCount: fiveMinuteBarCount });
   });
   app2.post("/api/local-research-node/shared-dataset-collection-progress", async (request, response) => {
@@ -8909,7 +9228,7 @@ function registerLocalResearchNodeRoutes(app2) {
     const totalSymbols = Number.isInteger(body?.totalSymbols) ? Math.max(0, Math.min(20, Number(body.totalSymbols))) : 0;
     const completedDailySymbols = Number.isInteger(body?.completedDailySymbols) ? Math.max(0, Math.min(totalSymbols || 20, Number(body.completedDailySymbols))) : 0;
     const completedFiveMinuteSymbols = Number.isInteger(body?.completedFiveMinuteSymbols) ? Math.max(0, Math.min(totalSymbols || 20, Number(body.completedFiveMinuteSymbols))) : 0;
-    await db.update(sharedDatasetCollectionRequests).set({ progressJson: { stage, message, totalSymbols, completedDailySymbols, completedFiveMinuteSymbols, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }).where(and25(eq35(sharedDatasetCollectionRequests.id, requestId), eq35(sharedDatasetCollectionRequests.status, "running")));
+    await db.update(sharedDatasetCollectionRequests).set({ progressJson: { stage, message, totalSymbols, completedDailySymbols, completedFiveMinuteSymbols, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }).where(and26(eq36(sharedDatasetCollectionRequests.id, requestId), eq36(sharedDatasetCollectionRequests.status, "running")));
     return response.json({ status: "progress_recorded" });
   });
   app2.post("/api/local-research-node/shared-dataset-collection-status", async (request, response) => {
@@ -8921,7 +9240,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1) return response.status(400).json({ status: "invalid_request", message: "\uC720\uD6A8\uD55C requestId\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    await db.update(sharedDatasetCollectionRequests).set({ status: "failed", lastError: message, progressJson: { stage: "failed", message, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(and25(eq35(sharedDatasetCollectionRequests.id, requestId), eq35(sharedDatasetCollectionRequests.status, "running")));
+    await db.update(sharedDatasetCollectionRequests).set({ status: "failed", lastError: message, progressJson: { stage: "failed", message, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, completedAt: /* @__PURE__ */ new Date() }).where(and26(eq36(sharedDatasetCollectionRequests.id, requestId), eq36(sharedDatasetCollectionRequests.status, "running")));
     return response.json({ status: "recorded" });
   });
   app2.get("/api/local-research-node/intraday-minute-backfill-plan", async (request, response) => {
@@ -8936,8 +9255,8 @@ function registerLocalResearchNodeRoutes(app2) {
     const maxSymbols = Number.isInteger(rawMaxSymbols) ? Math.max(1, Math.min(120, rawMaxSymbols)) : 60;
     const rawThreshold = Number(request.query.minAverageTurnoverWon);
     const minAverageTurnoverWon = Number.isSafeInteger(rawThreshold) && rawThreshold >= 0 ? rawThreshold : 1e10;
-    const dailyBars = await db.select({ symbol: localResearchDailyBars.symbol, date: localResearchDailyBars.date, turnover: localResearchDailyBars.turnover }).from(localResearchDailyBars).where(eq35(localResearchDailyBars.adjustmentBasis, "adjusted")).orderBy(desc28(localResearchDailyBars.date)).limit(2e4);
-    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc28(autonomousResearchRuns.updatedAt)).limit(40);
+    const dailyBars = await db.select({ symbol: localResearchDailyBars.symbol, date: localResearchDailyBars.date, turnover: localResearchDailyBars.turnover }).from(localResearchDailyBars).where(eq36(localResearchDailyBars.adjustmentBasis, "adjusted")).orderBy(desc29(localResearchDailyBars.date)).limit(2e4);
+    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc29(autonomousResearchRuns.updatedAt)).limit(40);
     const symbols = selectLiquidMinuteBackfillUniverse({ bars: dailyBars, knownNames: selectLocalDailyCollectionUniverse(runs, 120), thresholdWon: minAverageTurnoverWon, maxSymbols });
     if (!symbols.length) return response.status(409).json({ status: "waiting_for_liquid_universe", message: "\uCD5C\uADFC 30\uAC70\uB798\uC77C \uD3C9\uADE0 \uAC70\uB798\uB300\uAE08 \uAE30\uC900\uC744 \uCDA9\uC871\uD558\uB294 \uC2E4\uC81C \uC77C\uBD09 \uC720\uB2C8\uBC84\uC2A4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", minAverageTurnoverWon });
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
@@ -8954,14 +9273,14 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!experiment && shouldCloseIntradayExperiment({ tradingDate: tradingDate2, capturedAt: /* @__PURE__ */ new Date() })) {
       return response.status(409).json({ status: "market_closed", message: "\uC7A5 \uB9C8\uAC10\uC73C\uB85C \uB2F9\uC77C \uBAA8\uC758 \uC2E4\uD5D8\uC774 \uC885\uB8CC\uB418\uC5B4 \uCD94\uAC00 1\uBD84\uBD09 \uC218\uC9D1\uC744 \uACC4\uD68D\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", experimentId: null, tradingDate: tradingDate2 });
     }
-    const positions = experiment?.status === "tracking" ? await db.select({ symbol: dayTradeExperimentPositions.symbol, name: dayTradeExperimentPositions.name }).from(dayTradeExperimentPositions).where(eq35(dayTradeExperimentPositions.experimentId, experiment.id)) : [];
-    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq35(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc28(autonomousResearchRuns.updatedAt)).limit(40);
+    const positions = experiment?.status === "tracking" ? await db.select({ symbol: dayTradeExperimentPositions.symbol, name: dayTradeExperimentPositions.name }).from(dayTradeExperimentPositions).where(eq36(dayTradeExperimentPositions.experimentId, experiment.id)) : [];
+    const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq36(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc29(autonomousResearchRuns.updatedAt)).limit(40);
     const knownNames = selectLocalDailyCollectionUniverse(runs, 120);
-    const recentDailyBars = await db.select({ symbol: localResearchDailyBars.symbol, date: localResearchDailyBars.date, turnover: localResearchDailyBars.turnover }).from(localResearchDailyBars).where(eq35(localResearchDailyBars.adjustmentBasis, "adjusted")).orderBy(desc28(localResearchDailyBars.date)).limit(2e4);
+    const recentDailyBars = await db.select({ symbol: localResearchDailyBars.symbol, date: localResearchDailyBars.date, turnover: localResearchDailyBars.turnover }).from(localResearchDailyBars).where(eq36(localResearchDailyBars.adjustmentBasis, "adjusted")).orderBy(desc29(localResearchDailyBars.date)).limit(2e4);
     const bootstrapQuotes = selectLiquidMinuteBackfillUniverse({ bars: recentDailyBars, knownNames, thresholdWon: 1e10, maxSymbols: 60 }).map((item) => ({ symbol: item.symbol, name: item.name }));
     const quotes = positions.length ? positions : bootstrapQuotes;
-    const [requestRow] = await db.select().from(localMinuteCollectionRequests).where(and25(eq35(localMinuteCollectionRequests.tradingDate, tradingDate2), eq35(localMinuteCollectionRequests.status, "queued"))).orderBy(desc28(localMinuteCollectionRequests.requestedAt)).limit(1);
-    if (requestRow) await db.update(localMinuteCollectionRequests).set({ status: "running", startedAt: /* @__PURE__ */ new Date(), lastSeenAt: /* @__PURE__ */ new Date() }).where(eq35(localMinuteCollectionRequests.id, requestRow.id));
+    const [requestRow] = await db.select().from(localMinuteCollectionRequests).where(and26(eq36(localMinuteCollectionRequests.tradingDate, tradingDate2), eq36(localMinuteCollectionRequests.status, "queued"))).orderBy(desc29(localMinuteCollectionRequests.requestedAt)).limit(1);
+    if (requestRow) await db.update(localMinuteCollectionRequests).set({ status: "running", startedAt: /* @__PURE__ */ new Date(), lastSeenAt: /* @__PURE__ */ new Date() }).where(eq36(localMinuteCollectionRequests.id, requestRow.id));
     const plan = buildIntradayMinuteCollectionPlan({
       tradingDate: tradingDate2,
       experiment: experiment ? { id: experiment.id, tradingDate: experiment.tradingDate, status: experiment.status === "closed" ? "closed" : "tracking" } : null,
@@ -9103,21 +9422,21 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!requestedSymbols.length || !adjustmentBasis) return response.status(400).json({ status: "invalid_request", message: "6\uC790\uB9AC symbol \uB610\uB294 symbols \uBC30\uC5F4\uACFC adjustmentBasis\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const bars = await db.select().from(localResearchDailyBars).where(and25(inArray9(localResearchDailyBars.symbol, requestedSymbols), eq35(localResearchDailyBars.adjustmentBasis, adjustmentBasis))).orderBy(asc8(localResearchDailyBars.symbol), asc8(localResearchDailyBars.date));
+    const bars = await db.select().from(localResearchDailyBars).where(and26(inArray9(localResearchDailyBars.symbol, requestedSymbols), eq36(localResearchDailyBars.adjustmentBasis, adjustmentBasis))).orderBy(asc9(localResearchDailyBars.symbol), asc9(localResearchDailyBars.date));
     const barCountBySymbol = /* @__PURE__ */ new Map();
     for (const bar of bars) barCountBySymbol.set(bar.symbol, (barCountBySymbol.get(bar.symbol) ?? 0) + 1);
     const insufficientSymbols = requestedSymbols.filter((symbol) => (barCountBySymbol.get(symbol) ?? 0) < 85);
     if (insufficientSymbols.length) return response.status(409).json({ status: "insufficient_source_data", message: "\uBD88\uBCC0 \uB370\uC774\uD130\uC14B\uC5D0\uB294 \uC885\uBAA9\uBCC4 \uCD5C\uC18C 85\uAC1C\uC758 \uC2E4\uC81C \uC77C\uBD09\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.", insufficientSymbols, acceptedBarCountBySymbol: Object.fromEntries(barCountBySymbol) });
-    const owner = (await db.select().from(users).where(eq35(users.role, "admin")).orderBy(asc8(users.id)).limit(1))[0];
+    const owner = (await db.select().from(users).where(eq36(users.role, "admin")).orderBy(asc9(users.id)).limit(1))[0];
     if (!owner) return response.status(409).json({ status: "owner_missing", message: "\uB9AC\uC11C\uCE58 \uB370\uC774\uD130\uC14B \uC18C\uC720 \uC6B4\uC601\uC790\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const version = requestedSymbols.length === 1 ? buildLocalDailyDatasetVersion({ symbol: requestedSymbols[0], adjustmentBasis, bars }) : buildLocalDailyUniverseDatasetVersion({ symbols: requestedSymbols, adjustmentBasis, bars });
-    const existing = (await db.select().from(researchDatasets).where(and25(eq35(researchDatasets.userId, owner.id), eq35(researchDatasets.versionKey, version.versionKey))).limit(1))[0];
+    const existing = (await db.select().from(researchDatasets).where(and26(eq36(researchDatasets.userId, owner.id), eq36(researchDatasets.versionKey, version.versionKey))).limit(1))[0];
     if (existing?.qualityStatus === "ready") return response.json({ status: "ready", datasetId: existing.id, versionKey: existing.versionKey, barCount: existing.barCount, sourceFingerprint: version.sourceFingerprint, reused: true });
     const now = /* @__PURE__ */ new Date();
     const dates = bars.map((bar) => bar.date).sort();
     let datasetId = existing?.id;
     if (datasetId) {
-      await db.update(researchDatasets).set({ qualityStatus: "collecting", qualityReportJson: { state: "collecting", source: "local_research_daily_bars", rawSource: "kiwoom_ka10081", sourceFingerprint: version.sourceFingerprint, immutable: true, symbols: requestedSymbols, symbolCount: requestedSymbols.length } }).where(eq35(researchDatasets.id, datasetId));
+      await db.update(researchDatasets).set({ qualityStatus: "collecting", qualityReportJson: { state: "collecting", source: "local_research_daily_bars", rawSource: "kiwoom_ka10081", sourceFingerprint: version.sourceFingerprint, immutable: true, symbols: requestedSymbols, symbolCount: requestedSymbols.length } }).where(eq36(researchDatasets.id, datasetId));
     } else {
       const [created] = await db.insert(researchDatasets).values({
         userId: owner.id,
@@ -9143,11 +9462,11 @@ function registerLocalResearchNodeRoutes(app2) {
           set: { capturedAt: now }
         });
       }
-      await db.update(researchDatasets).set({ qualityStatus: "ready", readyAt: now, qualityReportJson: { state: "ready", source: "local_research_daily_bars", rawSource: "kiwoom_ka10081", sourceFingerprint: version.sourceFingerprint, immutable: true, symbols: requestedSymbols, symbolCount: requestedSymbols.length, adjustmentBasis, barCount: bars.length, startDate: dates[0], endDate: dates.at(-1), barCountBySymbol: Object.fromEntries(barCountBySymbol) } }).where(eq35(researchDatasets.id, datasetId));
+      await db.update(researchDatasets).set({ qualityStatus: "ready", readyAt: now, qualityReportJson: { state: "ready", source: "local_research_daily_bars", rawSource: "kiwoom_ka10081", sourceFingerprint: version.sourceFingerprint, immutable: true, symbols: requestedSymbols, symbolCount: requestedSymbols.length, adjustmentBasis, barCount: bars.length, startDate: dates[0], endDate: dates.at(-1), barCountBySymbol: Object.fromEntries(barCountBySymbol) } }).where(eq36(researchDatasets.id, datasetId));
       return response.json({ status: "ready", datasetId, versionKey: version.versionKey, barCount: bars.length, symbolCount: requestedSymbols.length, sourceFingerprint: version.sourceFingerprint, reused: false });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : "\uC6D0\uBCF8 \uC2A4\uB0C5\uC0F7 \uC800\uC7A5\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.";
-      await db.update(researchDatasets).set({ qualityStatus: "error", qualityReportJson: { state: "error", source: "local_research_daily_bars", sourceFingerprint: version.sourceFingerprint, error: message } }).where(eq35(researchDatasets.id, datasetId));
+      await db.update(researchDatasets).set({ qualityStatus: "error", qualityReportJson: { state: "error", source: "local_research_daily_bars", sourceFingerprint: version.sourceFingerprint, error: message } }).where(eq36(researchDatasets.id, datasetId));
       return response.status(500).json({ status: "snapshot_failed", message });
     }
   });
@@ -9171,7 +9490,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!Number.isInteger(requestId) || requestId < 1 || !status || !Number.isFinite(acceptedBarCount) || !Number.isFinite(rejectedBarCount)) return response.status(400).json({ status: "invalid_request", message: "\uC694\uCCAD ID\uC640 \uC644\uB8CC\xB7\uC2E4\uD328 \uC0C1\uD0DC\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    await db.update(localMinuteCollectionRequests).set({ status, acceptedBarCount, rejectedBarCount, lastError: status === "failed" ? message ?? "1\uBD84\uBD09 \uC218\uC9D1 \uC2E4\uD328" : null, completedAt: /* @__PURE__ */ new Date(), lastSeenAt: /* @__PURE__ */ new Date() }).where(eq35(localMinuteCollectionRequests.id, requestId));
+    await db.update(localMinuteCollectionRequests).set({ status, acceptedBarCount, rejectedBarCount, lastError: status === "failed" ? message ?? "1\uBD84\uBD09 \uC218\uC9D1 \uC2E4\uD328" : null, completedAt: /* @__PURE__ */ new Date(), lastSeenAt: /* @__PURE__ */ new Date() }).where(eq36(localMinuteCollectionRequests.id, requestId));
     return response.json({ status: "recorded" });
   });
   app2.post("/api/local-research-node/intraday-price-sync", async (request, response) => {
@@ -9195,9 +9514,9 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!parsedQuotes.length) return response.status(400).json({ status: "invalid_request", message: "\uC720\uD6A8\uD55C \uC2E4\uC81C \uC2DC\uC138\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.", rejected });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const [experiment] = await db.select().from(dayTradeExperiments).where(and25(eq35(dayTradeExperiments.status, "tracking"), eq35(dayTradeExperiments.tradingDate, body.tradingDate))).orderBy(desc28(dayTradeExperiments.updatedAt)).limit(1);
+    const [experiment] = await db.select().from(dayTradeExperiments).where(and26(eq36(dayTradeExperiments.status, "tracking"), eq36(dayTradeExperiments.tradingDate, body.tradingDate))).orderBy(desc29(dayTradeExperiments.updatedAt)).limit(1);
     if (!experiment) return response.status(409).json({ status: "waiting_for_data", message: "\uD574\uB2F9 \uAC70\uB798\uC77C\uC758 \uCD94\uC801 \uC911\uC778 \uC7A5\uC911 \uBAA8\uC758\uD22C\uC790 \uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const positions = await db.select().from(dayTradeExperimentPositions).where(eq35(dayTradeExperimentPositions.experimentId, experiment.id));
+    const positions = await db.select().from(dayTradeExperimentPositions).where(eq36(dayTradeExperimentPositions.experimentId, experiment.id));
     const { latestBySymbol, ignored } = selectFreshIntradayQuotes({ quotes: parsedQuotes, lastObservedAtBySymbol: new Map(positions.map((position) => [position.symbol, position.lastObservedAt])) });
     if (!latestBySymbol.size) {
       await db.insert(localResearchNodeSyncEvents).values({ experimentId: experiment.id, tradingDate: experiment.tradingDate, status: "partial", quoteCount: 0, rejectedQuoteCount: rejected + ignored, message: "\uC800\uC7A5\uB41C \uC2E4\uC81C \uC2DC\uC138\uBCF4\uB2E4 \uC0C8\uB85C\uC6B4 \uAC12\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
@@ -9209,9 +9528,9 @@ function registerLocalResearchNodeRoutes(app2) {
       const quote = latestBySymbol.get(position.symbol);
       const ledger = ledgerById.get(String(position.id));
       if (!ledger) continue;
-      await db.update(dayTradeExperimentPositions).set({ lastPrice: quote?.price ?? position.lastPrice, lastObservedAt: quote?.observedAt ?? position.lastObservedAt, buyFee: ledger.buyFee, estimatedExitFee: ledger.estimatedExitFee, netValue: Math.round(ledger.netValue), netPnl: Math.round(ledger.netPnl), netReturnPercent: ledger.netReturnPercent.toFixed(4) }).where(eq35(dayTradeExperimentPositions.id, position.id));
+      await db.update(dayTradeExperimentPositions).set({ lastPrice: quote?.price ?? position.lastPrice, lastObservedAt: quote?.observedAt ?? position.lastObservedAt, buyFee: ledger.buyFee, estimatedExitFee: ledger.estimatedExitFee, netValue: Math.round(ledger.netValue), netPnl: Math.round(ledger.netPnl), netReturnPercent: ledger.netReturnPercent.toFixed(4) }).where(eq36(dayTradeExperimentPositions.id, position.id));
     }
-    await db.update(dayTradeExperiments).set({ netValue: Math.round(portfolio.netValue), netPnl: Math.round(portfolio.netPnl), netReturnPercent: portfolio.netReturnPercent.toFixed(4) }).where(eq35(dayTradeExperiments.id, experiment.id));
+    await db.update(dayTradeExperiments).set({ netValue: Math.round(portfolio.netValue), netPnl: Math.round(portfolio.netPnl), netReturnPercent: portfolio.netReturnPercent.toFixed(4) }).where(eq36(dayTradeExperiments.id, experiment.id));
     const latestObservedAt = Array.from(latestBySymbol.values()).reduce((latest, quote) => !latest || quote.observedAt > latest ? quote.observedAt : latest, null);
     await db.insert(localResearchNodeSyncEvents).values({ experimentId: experiment.id, tradingDate: experiment.tradingDate, status: rejected ? "partial" : "success", quoteCount: latestBySymbol.size, rejectedQuoteCount: rejected + ignored, message: rejected ? "\uC77C\uBD80 \uC2DC\uC138 \uC785\uB825\uC774 \uAC70\uBD80\uB418\uC5C8\uC2B5\uB2C8\uB2E4." : null, observedAt: latestObservedAt });
     return response.json({ status: "synced", experimentId: experiment.id, acceptedQuoteCount: latestBySymbol.size, rejectedQuoteCount: rejected + ignored, latestObservedAt: latestObservedAt?.toISOString() ?? null, netValue: Math.round(portfolio.netValue), netPnl: Math.round(portfolio.netPnl), netReturnPercent: portfolio.netReturnPercent });
@@ -9242,11 +9561,11 @@ function registerLocalResearchNodeRoutes(app2) {
     const experiment = await ensureLocalIntradayExperiment(db, tradingDate2);
     if (!experiment) return response.status(409).json({ status: "waiting_for_data", message: "\uC7A5\uC911 \uC2E4\uC2DC\uAC04 \uBAA8\uC758\uD22C\uC790 \uC870\uAC74\uC2DD \uAE30\uB85D\uC774 \uC544\uC9C1 \uC5C6\uC2B5\uB2C8\uB2E4." });
     if (experiment.status !== "tracking") return response.status(409).json({ status: "market_closed", message: "\uC7A5 \uB9C8\uAC10\uC73C\uB85C \uB2F9\uC77C \uBAA8\uC758 \uC2E4\uD5D8\uC774 \uC885\uB8CC\uB418\uC5B4 \uC0C8 \uC790\uB3D9 \uC8FC\uBB38 \uACC4\uD68D\uC744 \uB9CC\uB4E4\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", experimentId: experiment.id, tradingDate: experiment.tradingDate });
-    const [policy] = await db.select().from(autoTradePolicies).where(eq35(autoTradePolicies.status, "active")).orderBy(desc28(autoTradePolicies.updatedAt)).limit(1);
+    const [policy] = await db.select().from(autoTradePolicies).where(eq36(autoTradePolicies.status, "active")).orderBy(desc29(autoTradePolicies.updatedAt)).limit(1);
     if (!policy) return response.status(409).json({ status: "waiting_for_policy", message: "\uD65C\uC131 \uC790\uB3D9 \uC2E4\uD22C \uC815\uCC45\uC774 \uC544\uC9C1 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const profile = (await db.select().from(tradingProfiles).where(eq35(tradingProfiles.userId, policy.userId)).limit(1))[0];
+    const profile = (await db.select().from(tradingProfiles).where(eq36(tradingProfiles.userId, policy.userId)).limit(1))[0];
     if (!profile || profile.killSwitch || !profile.autoTradeEnabled) return response.status(409).json({ status: "automatic_execution_paused", message: "\uC790\uB3D9\uB9E4\uB9E4 \uD65C\uC131\uD654\uC640 \uD0AC \uC2A4\uC704\uCE58 \uD574\uC81C\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
-    const positions = await db.select().from(dayTradeExperimentPositions).where(eq35(dayTradeExperimentPositions.experimentId, experiment.id));
+    const positions = await db.select().from(dayTradeExperimentPositions).where(eq36(dayTradeExperimentPositions.experimentId, experiment.id));
     const candidateIds = Array.from(new Set(positions.map((position) => position.candidateId)));
     const candidates = candidateIds.length ? await db.select({ id: autonomousResearchCandidates.id, fitnessScore: autonomousResearchCandidates.fitnessScore }).from(autonomousResearchCandidates).where(inArray9(autonomousResearchCandidates.id, candidateIds)) : [];
     const fitnessByCandidateId = new Map(candidates.map((candidate) => [candidate.id, Number(candidate.fitnessScore ?? 0)]));
@@ -9279,7 +9598,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const policyId = Number(body.policyId);
     const policyVersion = Number(body.policyVersion);
-    const [policy] = await db.select().from(autoTradePolicies).where(and25(eq35(autoTradePolicies.id, policyId), eq35(autoTradePolicies.version, policyVersion))).limit(1);
+    const [policy] = await db.select().from(autoTradePolicies).where(and26(eq36(autoTradePolicies.id, policyId), eq36(autoTradePolicies.version, policyVersion))).limit(1);
     if (!policy) return response.status(409).json({ status: "policy_missing", message: "\uC2E4\uD589 \uC2DC\uC791 \uC2DC\uC810\uC758 \uC790\uB3D9 \uC2E4\uD22C \uC815\uCC45 \uAE30\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const policySnapshot = { id: policy.id, version: policy.version, totalCapital: policy.totalCapital, maxConcurrentPositions: policy.maxConcurrentPositions, stopLossPercent: Number(policy.stopLossPercent), takeProfitPercent: Number(policy.takeProfitPercent), dailyLossLimitPercent: Number(policy.dailyLossLimitPercent) };
     const accepted = [];
@@ -9295,15 +9614,15 @@ function registerLocalResearchNodeRoutes(app2) {
       const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : symbol;
       const dedupeKey = typeof item.dedupeKey === "string" ? item.dedupeKey.trim() : "";
       if (!side || !status || side === "buy" && !hasCandidateId || !Number.isInteger(quantity) || quantity < 1 || !Number.isInteger(price) || price < 1 || !symbol || !dedupeKey || dedupeKey.length > 160) continue;
-      let intent = (await db.select().from(orderIntents).where(and25(eq35(orderIntents.userId, policy.userId), eq35(orderIntents.dedupeKey, dedupeKey))).limit(1))[0];
+      let intent = (await db.select().from(orderIntents).where(and26(eq36(orderIntents.userId, policy.userId), eq36(orderIntents.dedupeKey, dedupeKey))).limit(1))[0];
       if (!intent) {
         const [created] = await db.insert(orderIntents).values({ userId: policy.userId, sourceCandidateId: hasCandidateId ? candidateId : null, symbol, name, side, orderType: "limit", quantity, price, amount: quantity * price, status, riskReasonsJson: status === "rejected" ? [String(item.message ?? "\uB85C\uCEEC \uC2E4\uD589\uAE30\uC5D0\uC11C \uC8FC\uBB38\uC774 \uAC70\uBD80\uB418\uC5C8\uC2B5\uB2C8\uB2E4.")] : [], autoPolicyId: policy.id, autoPolicyVersion: policy.version, autoPolicySnapshotJson: policySnapshot, executionOrigin: "local_node", dedupeKey, brokerOrderId: typeof item.brokerOrderId === "string" ? item.brokerOrderId : null }).returning();
-        intent = (await db.select().from(orderIntents).where(eq35(orderIntents.id, created.id)).limit(1))[0];
+        intent = (await db.select().from(orderIntents).where(eq36(orderIntents.id, created.id)).limit(1))[0];
       } else if (["submitted", "filled"].includes(status) && intent.status !== "filled") {
-        await db.update(orderIntents).set({ status, brokerOrderId: typeof item.brokerOrderId === "string" ? item.brokerOrderId : intent.brokerOrderId }).where(eq35(orderIntents.id, intent.id));
+        await db.update(orderIntents).set({ status, brokerOrderId: typeof item.brokerOrderId === "string" ? item.brokerOrderId : intent.brokerOrderId }).where(eq36(orderIntents.id, intent.id));
       }
       if (!intent) continue;
-      const prior = await db.select({ id: orderExecutions.id }).from(orderExecutions).where(and25(eq35(orderExecutions.orderIntentId, intent.id), eq35(orderExecutions.executionStatus, status))).limit(1);
+      const prior = await db.select({ id: orderExecutions.id }).from(orderExecutions).where(and26(eq36(orderExecutions.orderIntentId, intent.id), eq36(orderExecutions.executionStatus, status))).limit(1);
       if (!prior.length) await db.insert(orderExecutions).values({ orderIntentId: intent.id, brokerOrderId: typeof item.brokerOrderId === "string" ? item.brokerOrderId : null, executionStatus: status, filledQuantity: status === "filled" ? quantity : 0, filledPrice: status === "filled" ? price : null, responseJson: { source: "local_research_node", message: item.message ?? null } });
       accepted.push(intent.id);
     }

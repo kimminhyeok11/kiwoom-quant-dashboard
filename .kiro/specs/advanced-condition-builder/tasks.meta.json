@@ -1,0 +1,337 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 shared/trading.ts에 신규 타입 추가": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042604
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672059376
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672150160
+      }
+    ],
+    "1.2 shared/indicatorCatalog.ts 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042655
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672157853
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672427382
+      }
+    ],
+    "1.3 shared/expressionValidation.ts 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042700
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672165360
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672427983
+      }
+    ],
+    "1.4 shared/parameterValidation.ts 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042754
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672172353
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672428798
+      }
+    ],
+    "2. Checkpoint - Shared 레이어 검증": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042837
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672439483
+      }
+    ],
+    "3.1 server/routers/conditionBuilder.ts 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042875
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672455757
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672928288
+      }
+    ],
+    "3.2 conditionBuilder.runBacktest mutation 구현": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042915
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672930177
+      }
+    ],
+    "3.3 server/routers.ts에 conditionBuilder 라우터 등록": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672042961
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672938091
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673280437
+      }
+    ],
+    "4.1 server/quant/evolution.ts 확장": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043025
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673292731
+      }
+    ],
+    "5. Checkpoint - Server 레이어 검증": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043099
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673293633
+      }
+    ],
+    "6.1 client/src/components/condition-builder/CategoryTree.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043135
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672456790
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672927466
+      }
+    ],
+    "6.2 client/src/components/condition-builder/ParameterPanel.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043174
+      },
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672457781
+      }
+    ],
+    "7.1 client/src/components/condition-builder/ExpressionBuilder.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043213
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672939097
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673281122
+      }
+    ],
+    "8.1 client/src/components/condition-builder/BacktestResultPanel.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043250
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672939875
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673282015
+      }
+    ],
+    "8.2 client/src/components/condition-builder/PresetLibrary.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043287
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672940893
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673282915
+      }
+    ],
+    "9.1 client/src/pages/ConditionBuilderPage.tsx 생성": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043323
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672941987
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673283819
+      }
+    ],
+    "9.2 MainDashboard.tsx에 \"조건식 작성기\" 탭 추가": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043398
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673284772
+      }
+    ],
+    "9.3 원클릭 백테스트에서 조건식 편집 연동": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043454
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673294949
+      }
+    ],
+    "10. Final Checkpoint - 전체 통합 검증": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672043492
+      },
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673295952
+      }
+    ],
+    "1. Shared 타입 확장 및 Indicator Catalog 정의": [
+      {
+        "executionId": "abc09c25-ba98-46f8-a506-1c8e38b77edb",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672428848
+      }
+    ],
+    "6. Client: CategoryTree 및 ParameterPanel 컴포넌트": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787672927518
+      }
+    ],
+    "3. Server: tRPC conditionBuilder 라우터 구현": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673280551
+      }
+    ],
+    "7. Client: ExpressionBuilder 컴포넌트": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673281170
+      }
+    ],
+    "8. Client: BacktestResultPanel 및 PresetLibrary 컴포넌트": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673283002
+      }
+    ],
+    "4. Server: Random Generator 확장": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673292793
+      }
+    ],
+    "9. Client: ConditionBuilderPage 및 라우팅 통합": [
+      {
+        "executionId": "4645d7da-64ab-4ec3-ab84-3a8ac96f5340",
+        "chatSessionId": "sess_6c4c1e94-c6b7-40e5-bd23-1169ed75440e",
+        "timestamp": 1787673295049
+      }
+    ]
+  }
+}
