@@ -1,12 +1,11 @@
 /**
- * 차트 데이터 라우터
- * 
- * 저장된 1분봉/일봉 데이터를 차트 컴포넌트용으로 제공합니다.
- * 클라이언트에서 타임프레임 변환은 자체적으로 수행합니다.
+ * 차트 ?�이???�우?? * 
+ * ?�?�된 1분봉/?�봉 ?�이?��? 차트 컴포?�트?�으�??�공?�니??
+ * ?�라?�언?�에???�?�프?�임 변?��? ?�체?�으�??�행?�니??
  */
 
 import { z } from "zod";
-import { asc, and, eq, desc, gte, lte, inArray } from "drizzle-orm";
+import { asc, and, eq, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { publicProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { intradayMinuteBars, localResearchDailyBars } from "../../drizzle/schema";
@@ -14,10 +13,10 @@ import { TRPCError } from "@trpc/server";
 
 export const chartDataRouter = router({
   /**
-   * 종목의 1분봉 데이터 조회
-   * - tradingDate: 특정 거래일 (없으면 최근 데이터)
-   * - symbol: 6자리 종목코드
-   * - days: 최근 N거래일 (기본 5)
+   * 종목??1분봉 ?�이??조회
+   * - tradingDate: ?�정 거래??(?�으�?최근 ?�이??
+   * - symbol: 6?�리 종목코드
+   * - days: 최근 N거래??(기본 5)
    */
   minuteBars: publicProcedure
     .input(z.object({
@@ -27,7 +26,7 @@ export const chartDataRouter = router({
     }))
     .query(async ({ input }) => {
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?�결 불�?" });
 
       let query;
       if (input.tradingDate) {
@@ -96,7 +95,7 @@ export const chartDataRouter = router({
     }),
 
   /**
-   * 종목의 일봉 데이터 조회
+   * 종목???�봉 ?�이??조회
    */
   dailyBars: publicProcedure
     .input(z.object({
@@ -107,11 +106,11 @@ export const chartDataRouter = router({
     }))
     .query(async ({ input }) => {
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?�결 불�?" });
 
       const conditions = [
         eq(localResearchDailyBars.symbol, input.symbol),
-        eq(localResearchDailyBars.adjustmentBasis, "adjusted"),
+        sql`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`,
       ];
       if (input.startDate) conditions.push(gte(localResearchDailyBars.date, input.startDate));
       if (input.endDate) conditions.push(lte(localResearchDailyBars.date, input.endDate));
@@ -145,20 +144,20 @@ export const chartDataRouter = router({
     }),
 
   /**
-   * 수집된 종목 목록 (차트에서 종목 선택용)
+   * ?�집??종목 목록 (차트?�서 종목 ?�택??
    */
   availableSymbols: publicProcedure.query(async () => {
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?�결 불�?" });
 
-    // 일봉이 있는 종목 목록
+    // ?�봉???�는 종목 목록
     const daily = await db
       .selectDistinct({ symbol: localResearchDailyBars.symbol })
       .from(localResearchDailyBars)
-      .where(eq(localResearchDailyBars.adjustmentBasis, "adjusted"))
+      .where(sql`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`)
       .limit(100);
 
-    // 분봉이 있는 종목 목록
+    // 분봉???�는 종목 목록
     const minute = await db
       .selectDistinct({ symbol: intradayMinuteBars.symbol })
       .from(intradayMinuteBars)

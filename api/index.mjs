@@ -62220,10 +62220,10 @@ var survivalResearchRouter = router({
 // server/routers/chartData.ts
 var chartDataRouter = router({
   /**
-   * 종목의 1분봉 데이터 조회
-   * - tradingDate: 특정 거래일 (없으면 최근 데이터)
-   * - symbol: 6자리 종목코드
-   * - days: 최근 N거래일 (기본 5)
+   * 종목??1분봉 ?�이??조회
+   * - tradingDate: ?�정 거래??(?�으�?최근 ?�이??
+   * - symbol: 6?�리 종목코드
+   * - days: 최근 N거래??(기본 5)
    */
   minuteBars: publicProcedure.input(external_exports.object({
     symbol: external_exports.string().regex(/^\d{6}$/),
@@ -62231,7 +62231,7 @@ var chartDataRouter = router({
     days: external_exports.number().int().min(1).max(60).default(5)
   })).query(async ({ input }) => {
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?\uFFFD\uACB0 \uBD88\uFFFD?" });
     let query;
     if (input.tradingDate) {
       query = db.select({
@@ -62279,7 +62279,7 @@ var chartDataRouter = router({
     return { bars, tradingDates, symbol: input.symbol };
   }),
   /**
-   * 종목의 일봉 데이터 조회
+   * 종목???�봉 ?�이??조회
    */
   dailyBars: publicProcedure.input(external_exports.object({
     symbol: external_exports.string().regex(/^\d{6}$/),
@@ -62288,10 +62288,10 @@ var chartDataRouter = router({
     limit: external_exports.number().int().min(1).max(1e3).default(600)
   })).query(async ({ input }) => {
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?\uFFFD\uACB0 \uBD88\uFFFD?" });
     const conditions = [
       eq(localResearchDailyBars.symbol, input.symbol),
-      eq(localResearchDailyBars.adjustmentBasis, "adjusted")
+      sql`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`
     ];
     if (input.startDate) conditions.push(gte(localResearchDailyBars.date, input.startDate));
     if (input.endDate) conditions.push(lte(localResearchDailyBars.date, input.endDate));
@@ -62316,12 +62316,12 @@ var chartDataRouter = router({
     return { bars, symbol: input.symbol, barCount: bars.length };
   }),
   /**
-   * 수집된 종목 목록 (차트에서 종목 선택용)
+   * ?�집??종목 목록 (차트?�서 종목 ?�택??
    */
   availableSymbols: publicProcedure.query(async () => {
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
-    const daily = await db.selectDistinct({ symbol: localResearchDailyBars.symbol }).from(localResearchDailyBars).where(eq(localResearchDailyBars.adjustmentBasis, "adjusted")).limit(100);
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB ?\uFFFD\uACB0 \uBD88\uFFFD?" });
+    const daily = await db.selectDistinct({ symbol: localResearchDailyBars.symbol }).from(localResearchDailyBars).where(sql`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`).limit(100);
     const minute2 = await db.selectDistinct({ symbol: intradayMinuteBars.symbol }).from(intradayMinuteBars).limit(100);
     const symbols = /* @__PURE__ */ new Map();
     for (const row of daily) {
