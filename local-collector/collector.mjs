@@ -274,6 +274,7 @@ class KiwoomApi {
         "api-id": "ka10032",
       },
       body: JSON.stringify({ mrkt_div: market, stex_tp: "KRX", vol_rank_tp: "1" }),
+      signal: AbortSignal.timeout(15000),
     });
     const payload = await response.json();
     if (!response.ok || String(payload.return_code ?? "0") !== "0") {
@@ -375,6 +376,30 @@ function selectUniverse(ranking, maxSymbols) {
     .slice(0, maxSymbols);
 }
 
+// Default universe when ranking API is unavailable (after hours / first run)
+const DEFAULT_UNIVERSE = [
+  { symbol: "005930", name: "삼성전자" },
+  { symbol: "000660", name: "SK하이닉스" },
+  { symbol: "373220", name: "LG에너지솔루션" },
+  { symbol: "035420", name: "NAVER" },
+  { symbol: "005380", name: "현대자동차" },
+  { symbol: "000270", name: "기아" },
+  { symbol: "068270", name: "셀트리온" },
+  { symbol: "035720", name: "카카오" },
+  { symbol: "005490", name: "POSCO홀딩스" },
+  { symbol: "055550", name: "신한지주" },
+  { symbol: "105560", name: "KB금융" },
+  { symbol: "006400", name: "삼성SDI" },
+  { symbol: "003670", name: "포스코퓨처엠" },
+  { symbol: "051910", name: "LG화학" },
+  { symbol: "028260", name: "삼성물산" },
+  { symbol: "012330", name: "현대모비스" },
+  { symbol: "066570", name: "LG전자" },
+  { symbol: "003550", name: "LG" },
+  { symbol: "034730", name: "SK" },
+  { symbol: "015760", name: "한국전력" },
+];
+
 // ===== Main Collection Logic =====
 async function collectDaily(api, sync) {
   log("INFO", "=== 일봉 수집 시작 ===");
@@ -387,13 +412,15 @@ async function collectDaily(api, sync) {
     log("INFO", `거래대금 순위에서 ${universe.length}개 종목 선정`);
     saveProgress({ dailyUniverse: universe.map(s => ({ symbol: s.symbol, name: s.name })), dailyUniverseAt: new Date().toISOString() });
   } catch (error) {
-    // Fallback: use saved universe
+    // Fallback: use saved universe or default
     const progress = loadProgress();
     if (progress.dailyUniverse?.length) {
       universe = progress.dailyUniverse;
       log("WARN", `거래대금 순위 조회 실패, 저장된 유니버스 사용 (${universe.length}개)`, { error: error.message });
     } else {
-      throw error;
+      universe = DEFAULT_UNIVERSE.slice(0, CONFIG.maxSymbols);
+      log("WARN", `거래대금 순위 조회 실패, 기본 대형주 ${universe.length}개 사용`, { error: error.message });
+      saveProgress({ dailyUniverse: universe, dailyUniverseAt: new Date().toISOString() });
     }
   }
 
