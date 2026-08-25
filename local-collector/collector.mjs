@@ -189,6 +189,7 @@ class KiwoomApi {
           "next-key": nextKey,
         },
         body: JSON.stringify({ stk_cd: symbol, base_dt: baseDate, upd_stkpc_tp: "1" }),
+        signal: AbortSignal.timeout(10000),
       });
       const payload = await response.json();
       if (!response.ok || String(payload.return_code ?? "0") !== "0") {
