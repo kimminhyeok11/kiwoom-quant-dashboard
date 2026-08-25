@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 2,
   "installCommand": "pnpm install",
   "buildCommand": "pnpm build",
