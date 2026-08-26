@@ -1,13 +1,10 @@
 /**
- * 키움 모의투자 자동 주문 실행기
+ * ?��? 모의?�자 ?�동 주문 ?�행�? * 
+ * ?�버?�서 ?�동 주문 계획??받아 mockapi.kiwoom.com?�로 주문 ?�송.
+ * 체결 조회 + ?�고 ?�기?�까지 ?�행.
  * 
- * 서버에서 자동 주문 계획을 받아 mockapi.kiwoom.com으로 주문 전송.
- * 체결 조회 + 잔고 동기화까지 수행.
- * 
- * 사용법:
- *   node mock-trader.mjs              # 주문 계획 조회 → 전송 → 체결 동기화
- *   node mock-trader.mjs --check      # 잔고/체결 조회만
- */
+ * ?�용�?
+ *   node mock-trader.mjs              # 주문 계획 조회 ???�송 ??체결 ?�기?? *   node mock-trader.mjs --check      # ?�고/체결 조회�? */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -20,7 +17,7 @@ if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 // ===== Load .env =====
 function loadEnv() {
   const envPath = resolve(__dirname, ".env");
-  if (!existsSync(envPath)) { console.error("❌ .env 파일이 없습니다."); process.exit(1); }
+  if (!existsSync(envPath)) { console.error("??.env ?�일???�습?�다."); process.exit(1); }
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -64,14 +61,14 @@ async function getToken() {
   });
   const data = await res.json();
   if (!res.ok || String(data.return_code ?? "0") !== "0") {
-    throw new Error(`모의투자 OAuth 실패: ${data.return_msg || res.status} (code: ${data.return_code})`);
+    throw new Error(`모의?�자 OAuth ?�패: ${data.return_msg || res.status} (code: ${data.return_code})`);
   }
   accessToken = data.token;
   const exp = (data.expires_dt || "").replace(/[^0-9]/g, "");
   tokenExpiry = exp.length >= 14
     ? new Date(+exp.slice(0,4), +exp.slice(4,6)-1, +exp.slice(6,8), +exp.slice(8,10), +exp.slice(10,12), +exp.slice(12,14)).getTime()
     : Date.now() + 50*60*1000;
-  log("INFO", "모의투자 OAuth 토큰 발급 완료");
+  log("INFO", "모의?�자 OAuth ?�큰 발급 ?�료");
   return accessToken;
 }
 
@@ -91,13 +88,13 @@ async function submitBuyOrder(symbol, quantity, price) {
       ord_qty: String(quantity),
       ord_uv: String(price),
       buy_sell_tp: "1", // 매수
-      ord_tp: "00", // 지정가
+      ord_tp: "00", // 지?��?
       stex_tp: "KRX",
     }),
   });
   const data = await res.json();
   if (!res.ok || String(data.return_code ?? "0") !== "0") {
-    throw new Error(`매수 주문 실패 [${symbol}]: ${data.return_msg || res.status}`);
+    throw new Error(`매수 주문 ?�패 [${symbol}]: ${data.return_msg || res.status}`);
   }
   return { orderNumber: data.ord_no, symbol, quantity, price };
 }
@@ -118,13 +115,13 @@ async function submitSellOrder(symbol, quantity, price) {
       ord_qty: String(quantity),
       ord_uv: String(price),
       buy_sell_tp: "2", // 매도
-      ord_tp: "00", // 지정가
+      ord_tp: "00", // 지?��?
       stex_tp: "KRX",
     }),
   });
   const data = await res.json();
   if (!res.ok || String(data.return_code ?? "0") !== "0") {
-    throw new Error(`매도 주문 실패 [${symbol}]: ${data.return_msg || res.status}`);
+    throw new Error(`매도 주문 ?�패 [${symbol}]: ${data.return_msg || res.status}`);
   }
   return { orderNumber: data.ord_no, symbol, quantity, price };
 }
@@ -143,14 +140,14 @@ async function getExecutions() {
     body: JSON.stringify({
       acnt_no: CONFIG.account,
       ord_dt: today,
-      qry_tp: "1", // 전체
-      buy_sell_tp: "0", // 전체
+      qry_tp: "1", // ?�체
+      buy_sell_tp: "0", // ?�체
       stex_tp: "%",
     }),
   });
   const data = await res.json();
   if (!res.ok || String(data.return_code ?? "0") !== "0") {
-    throw new Error(`체결 조회 실패: ${data.return_msg || res.status}`);
+    throw new Error(`체결 조회 ?�패: ${data.return_msg || res.status}`);
   }
   return (data.acnt_ord_cntr_prps_dtl || []).map(row => ({
     orderNumber: row.ord_no || "",
@@ -175,11 +172,11 @@ async function getPositions() {
       authorization: `Bearer ${token}`,
       "api-id": "kt00018",
     },
-    body: JSON.stringify({ acnt_no: CONFIG.account }),
+    body: JSON.stringify({ acnt_no: CONFIG.account, qry_tp: "1", dmst_stex_tp: "KRX" }),
   });
   const data = await res.json();
   if (!res.ok || String(data.return_code ?? "0") !== "0") {
-    throw new Error(`잔고 조회 실패: ${data.return_msg || res.status}`);
+    throw new Error(`?�고 조회 ?�패: ${data.return_msg || res.status}`);
   }
   const positions = (data.acnt_evlt_remn_indv_tot || []).map(row => ({
     symbol: (row.stk_cd || "").trim(),
@@ -231,68 +228,66 @@ async function main() {
   const checkOnly = process.argv.includes("--check");
 
   log("INFO", "========================================");
-  log("INFO", `모의투자 실행기 시작 (${checkOnly ? "조회 모드" : "주문+동기화 모드"})`);
+  log("INFO", `모의?�자 ?�행�??�작 (${checkOnly ? "조회 모드" : "주문+?�기??모드"})`);
   log("INFO", "========================================");
 
   if (!CONFIG.appKey || !CONFIG.appSecret || !CONFIG.account) {
-    log("ERROR", "KIWOOM_MOCK_APP_KEY / SECRET / ACCOUNT가 설정되지 않았습니다.");
+    log("ERROR", "KIWOOM_MOCK_APP_KEY / SECRET / ACCOUNT가 ?�정?��? ?�았?�니??");
     process.exit(1);
   }
 
-  // 1. OAuth 테스트
-  try {
+  // 1. OAuth ?�스??  try {
     await getToken();
   } catch (error) {
-    log("ERROR", "모의투자 OAuth 실패", { error: error.message });
+    log("ERROR", "모의?�자 OAuth ?�패", { error: error.message });
     process.exit(1);
   }
 
-  // 2. 체결/잔고 조회
-  log("INFO", "체결 내역 조회...");
+  // 2. 체결/?�고 조회
+  log("INFO", "체결 ?�역 조회...");
   const executions = await getExecutions();
-  log("INFO", `체결 내역: ${executions.length}건`);
+  log("INFO", `체결 ?�역: ${executions.length}�?);
 
-  log("INFO", "잔고 조회...");
+  log("INFO", "?�고 조회...");
   const positions = await getPositions();
-  log("INFO", `보유 종목: ${positions.positions.length}개`, {
+  log("INFO", `보유 종목: ${positions.positions.length}�?, {
     totalPL: positions.totalProfitLoss,
-    positions: positions.positions.map(p => `${p.name}(${p.symbol}) ${p.quantity}주 ${p.profitLossRate}%`),
+    positions: positions.positions.map(p => `${p.name}(${p.symbol}) ${p.quantity}�?${p.profitLossRate}%`),
   });
 
   if (checkOnly) {
-    console.log("\n=== 체결 내역 ===");
+    console.log("\n=== 체결 ?�역 ===");
     executions.forEach(e => console.log(`  ${e.orderTime} ${e.name}(${e.symbol}) 체결 ${e.filledQuantity}/${e.orderQuantity} @${e.filledPrice}`));
     console.log("\n=== 보유 종목 ===");
-    positions.positions.forEach(p => console.log(`  ${p.name}(${p.symbol}) ${p.quantity}주 평단가${p.averagePrice} 현재${p.currentPrice} 수익률${p.profitLossRate}%`));
-    console.log(`\n  총평가: ${positions.totalEvaluation.toLocaleString()}원, 총손익: ${positions.totalProfitLoss.toLocaleString()}원`);
+    positions.positions.forEach(p => console.log(`  ${p.name}(${p.symbol}) ${p.quantity}�??�단가${p.averagePrice} ?�재${p.currentPrice} ?�익�?{p.profitLossRate}%`));
+    console.log(`\n  총평가: ${positions.totalEvaluation.toLocaleString()}?? 총손?? ${positions.totalProfitLoss.toLocaleString()}??);
     return;
   }
 
-  // 3. 서버에서 자동 주문 계획 가져오기
-  log("INFO", "서버에서 주문 계획 조회...");
+  // 3. ?�버?�서 ?�동 주문 계획 가?�오�?  log("INFO", "?�버?�서 주문 계획 조회...");
   let orderPlan;
   try {
     orderPlan = await serverRequest("/auto-order-plan");
   } catch (error) {
-    log("WARN", "주문 계획 조회 실패 - 주문 없이 동기화만 진행", { error: error.message });
+    log("WARN", "주문 계획 조회 ?�패 - 주문 ?�이 ?�기?�만 진행", { error: error.message });
     orderPlan = { status: "idle" };
   }
 
   if (orderPlan.status === "ready" && orderPlan.orders?.length) {
-    log("INFO", `주문 계획: ${orderPlan.orders.length}건`);
+    log("INFO", `주문 계획: ${orderPlan.orders.length}�?);
 
     for (const order of orderPlan.orders) {
       try {
         if (order.side === "buy") {
           const result = await submitBuyOrder(order.symbol, order.quantity, order.price);
-          log("INFO", `✅ 매수 주문 전송: ${order.name}(${order.symbol}) ${order.quantity}주 @${order.price}`, { orderNumber: result.orderNumber });
+          log("INFO", `??매수 주문 ?�송: ${order.name}(${order.symbol}) ${order.quantity}�?@${order.price}`, { orderNumber: result.orderNumber });
         } else if (order.side === "sell") {
           const result = await submitSellOrder(order.symbol, order.quantity, order.price);
-          log("INFO", `✅ 매도 주문 전송: ${order.name}(${order.symbol}) ${order.quantity}주 @${order.price}`, { orderNumber: result.orderNumber });
+          log("INFO", `??매도 주문 ?�송: ${order.name}(${order.symbol}) ${order.quantity}�?@${order.price}`, { orderNumber: result.orderNumber });
         }
         await new Promise(r => setTimeout(r, 500));
       } catch (error) {
-        log("ERROR", `주문 실패: ${order.symbol}`, { error: error.message });
+        log("ERROR", `주문 ?�패: ${order.symbol}`, { error: error.message });
       }
     }
 
@@ -301,29 +296,28 @@ async function main() {
     const newExecutions = await getExecutions();
     const newPositions = await getPositions();
 
-    // 4. 서버에 체결/잔고 동기화
-    try {
+    // 4. ?�버??체결/?�고 ?�기??    try {
       await syncExecutionsToServer(newExecutions, newPositions);
-      log("INFO", "서버 동기화 완료");
+      log("INFO", "?�버 ?�기???�료");
     } catch (error) {
-      log("WARN", "서버 동기화 실패", { error: error.message });
+      log("WARN", "?�버 ?�기???�패", { error: error.message });
     }
   } else {
-    log("INFO", "실행할 주문 계획이 없습니다.");
+    log("INFO", "?�행??주문 계획???�습?�다.");
 
-    // 동기화만 수행
+    // ?�기?�만 ?�행
     try {
       await syncExecutionsToServer(executions, positions);
-      log("INFO", "서버 동기화 완료 (잔고만)");
+      log("INFO", "?�버 ?�기???�료 (?�고�?");
     } catch (error) {
-      log("WARN", "서버 동기화 실패", { error: error.message });
+      log("WARN", "?�버 ?�기???�패", { error: error.message });
     }
   }
 
-  log("INFO", "모의투자 실행기 완료");
+  log("INFO", "모의?�자 ?�행�??�료");
 }
 
 main().catch(error => {
-  log("ERROR", "치명적 오류", { error: error.message });
+  log("ERROR", "치명???�류", { error: error.message });
   process.exit(1);
 });

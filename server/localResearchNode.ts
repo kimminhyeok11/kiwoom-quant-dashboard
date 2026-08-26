@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "crypto";
+﻿import { timingSafeEqual } from "crypto";
 import { createHash } from "node:crypto";
 import type { Express, Request } from "express";
 import { and, asc, count, desc, eq, inArray, like, ne, sql } from "drizzle-orm";
@@ -412,7 +412,7 @@ async function ensureLocalIntradayExperiment(db: NonNullable<Awaited<ReturnType<
     });
     const simulation = { status: entries.length ? "tracking" as const : "not_entered" as const, entries, updatedAt: now.toISOString(), source: "local_ka10081_and_ka10080" };
     await db.insert(autonomousResearchCandidates).values({ runId: run.id, fingerprint: source.fingerprint, rootGenomeJson: source.rootGenomeJson, minimumScore: source.minimumScore, generationNumber: source.generationNumber, status: "survived", inSampleMetricsJson: source.inSampleMetricsJson, outOfSampleMetricsJson: source.outOfSampleMetricsJson, walkForwardMetricsJson: source.walkForwardMetricsJson, simulationJson: simulation, fitnessScore: source.fitnessScore, evaluatedAt: now }).onConflictDoUpdate({
-      target: autonomousResearchCandidates.fingerprint,
+      target: [autonomousResearchCandidates.runId, autonomousResearchCandidates.fingerprint],
       set: { simulationJson: simulation, updatedAt: now },
     });
   }
@@ -668,7 +668,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       if (bars.length !== submitted.length) return response.status(400).json({ status: "invalid_source_data", message: "5분봉 청크에 유효하지 않은 원본이 포함되어 있습니다." });
       await db.insert(researchFiveMinuteBars).values(bars).onConflictDoUpdate({
         target: [researchFiveMinuteBars.datasetId, researchFiveMinuteBars.symbol, researchFiveMinuteBars.tradingDate, researchFiveMinuteBars.intervalAt],
-        set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, source: sql`excluded.source`, rawFingerprint: sql`excluded.rawFingerprint` },
+        set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, source: sql`excluded.source`, rawFingerprint: sql`excluded."rawFingerprint"` },
       });
     }
     return response.json({ status: "chunk_recorded", requestId, datasetId, kind, acceptedBarCount: submitted.length });
@@ -796,7 +796,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     const values = selected.bars.map(bar => ({ tradingDate, symbol: bar.symbol, minuteAt: bar.minuteAt, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(Math.trunc(bar.volume)), source: "kiwoom_ka10080", rawFingerprint: minuteBarFingerprint(bar), capturedAt }));
     await db.insert(intradayMinuteBars).values(values).onConflictDoUpdate({
       target: [intradayMinuteBars.tradingDate, intradayMinuteBars.symbol, intradayMinuteBars.minuteAt],
-      set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, rawFingerprint: sql`excluded.rawFingerprint`, capturedAt: sql`excluded.capturedAt` },
+      set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, rawFingerprint: sql`excluded."rawFingerprint"`, capturedAt: sql`excluded."capturedAt"` },
     });
     const ensuredExperiment = await ensureLocalIntradayExperiment(db, tradingDate);
     const closedExperiment = await closeLocalIntradayExperimentAtMarketClose(db, { tradingDate, capturedAt });
@@ -840,7 +840,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       const values = selectedBars.slice(offset, offset + 1_000).map(bar => ({ tradingDate: bar.tradingDate, symbol: bar.symbol, minuteAt: bar.minuteAt, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(Math.trunc(bar.volume)), source: "kiwoom_ka10080", rawFingerprint: minuteBarFingerprint(bar), capturedAt }));
       await db.insert(intradayMinuteBars).values(values).onConflictDoUpdate({
         target: [intradayMinuteBars.tradingDate, intradayMinuteBars.symbol, intradayMinuteBars.minuteAt],
-        set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, rawFingerprint: sql`excluded.rawFingerprint`, capturedAt: sql`excluded.capturedAt` },
+        set: { open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, rawFingerprint: sql`excluded."rawFingerprint"`, capturedAt: sql`excluded."capturedAt"` },
       });
     }
     return response.json({ status: "synced", year, acceptedBarCount: selectedBars.length, rejectedBarCount, tradingDateCount: byTradingDate.size, capturedAt: capturedAt.toISOString() });
@@ -887,7 +887,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     await db.insert(localResearchDailyBars).values(values).onConflictDoUpdate({
       target: [localResearchDailyBars.symbol, localResearchDailyBars.date, localResearchDailyBars.adjustmentBasis],
       set: {
-        open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, turnover: sql`excluded.turnover`, rawFingerprint: sql`excluded.rawFingerprint`, capturedAt: sql`excluded.capturedAt`,
+        open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, turnover: sql`excluded.turnover`, rawFingerprint: sql`excluded."rawFingerprint"`, capturedAt: sql`excluded."capturedAt"`,
       },
     });
     return response.json({ status: "synced", symbol, adjustmentBasis, acceptedBarCount: values.length, rejectedBarCount: selected.rejected, deduplicatedBarCount: selected.deduplicated, capturedAt: capturedAt.toISOString() });
