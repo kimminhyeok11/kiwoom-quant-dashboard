@@ -8595,8 +8595,13 @@ var oneClickBacktestRouter = router({
           takeProfitCount: sr.result.takeProfitCount,
           timeExitCount: sr.result.timeExitCount,
           avgHoldingDays: Number(sr.result.avgHoldingDays.toFixed(1)),
-          trades: sr.result.trades.slice(-10)
+          trades: sr.result.trades.slice(-10),
           // 최근 10건만
+          equityCurve: sr.result.trades.reduce((curve, t2, i) => {
+            const prevEquity = i === 0 ? 100 : curve[i - 1].equity;
+            curve.push({ date: t2.exitDate, equity: Number((prevEquity * (1 + t2.returnPercent / 100)).toFixed(2)) });
+            return curve;
+          }, [])
         }))
       }))
     };
@@ -8755,6 +8760,91 @@ var oneClickBacktestRouter = router({
       scoringJson: p.scoringJson,
       createdAt: p.createdAt
     }));
+  }),
+  /**
+   * 랜덤 기간 검증: 동일 전략을 N회 랜덤 기간으로 반복 백테스트
+   * 과최적화 방지를 위한 핵심 검증
+   */
+  randomValidation: publicProcedure.input(z19.object({
+    root: z19.unknown(),
+    minimumScore: z19.number().int().min(0).max(200),
+    iterations: z19.number().int().min(10).max(500).default(50),
+    holdingDays: z19.number().int().min(1).max(60).default(5),
+    stopLossPercent: z19.number().min(0).max(20).default(3),
+    takeProfitPercent: z19.number().min(0).max(50).default(5)
+  })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError17({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const feeRate = 3e-4 + 8 / 1e4;
+    const allSymbols = await db.selectDistinct({ symbol: localResearchDailyBars.symbol }).from(localResearchDailyBars).where(eq31(localResearchDailyBars.adjustmentBasis, "adjusted")).limit(50);
+    if (!allSymbols.length) throw new TRPCError17({ code: "PRECONDITION_FAILED", message: "\uC77C\uBD09 \uB370\uC774\uD130\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    const barsBySymbol = {};
+    for (const { symbol } of allSymbols.slice(0, 10)) {
+      const rows = await db.select({ date: localResearchDailyBars.date, open: localResearchDailyBars.open, high: localResearchDailyBars.high, low: localResearchDailyBars.low, close: localResearchDailyBars.close, volume: localResearchDailyBars.volume, turnover: localResearchDailyBars.turnover }).from(localResearchDailyBars).where(and21(eq31(localResearchDailyBars.symbol, symbol), eq31(localResearchDailyBars.adjustmentBasis, "adjusted"))).orderBy(asc7(localResearchDailyBars.date)).limit(600);
+      if (rows.length >= 60) barsBySymbol[symbol] = rows.map((r) => ({ date: r.date, open: r.open, high: r.high, low: r.low, close: r.close, volume: Number(r.volume), turnover: Number(r.turnover) }));
+    }
+    const symbols = Object.keys(barsBySymbol);
+    if (!symbols.length) throw new TRPCError17({ code: "PRECONDITION_FAILED", message: "60\uBD09 \uC774\uC0C1 \uB370\uC774\uD130\uAC00 \uC788\uB294 \uC885\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    const iterationResults = [];
+    for (let i = 0; i < input.iterations; i++) {
+      const symbol = symbols[i % symbols.length];
+      const bars = barsBySymbol[symbol];
+      const minBars = 60;
+      const maxStart = Math.max(0, bars.length - minBars);
+      const startIndex = Math.floor(Math.random() * maxStart);
+      const endIndex = Math.min(bars.length, startIndex + minBars + Math.floor(Math.random() * (bars.length - startIndex - minBars)));
+      const slicedBars = bars.slice(startIndex, endIndex);
+      if (slicedBars.length < 30) continue;
+      const result = runDailyBacktest({
+        bars: slicedBars,
+        expression: input.root,
+        minScore: input.minimumScore,
+        holdingDays: input.holdingDays,
+        feeRate,
+        entryDelayDays: 1,
+        entryTiming: "open",
+        maxOpenGapPercent: 3,
+        stopLossPercent: input.stopLossPercent,
+        takeProfitPercent: input.takeProfitPercent
+      });
+      iterationResults.push({
+        iteration: i + 1,
+        avgReturn: Number(result.totalReturn.toFixed(2)),
+        winRate: Number(result.winRate.toFixed(1)),
+        tradeCount: result.tradeCount,
+        maxDrawdown: Number(result.maxDrawdown.toFixed(2))
+      });
+    }
+    const returns = iterationResults.map((r) => r.avgReturn);
+    const drawdowns = iterationResults.map((r) => r.maxDrawdown);
+    const winRates = iterationResults.map((r) => r.winRate);
+    const trades = iterationResults.map((r) => r.tradeCount);
+    const mean4 = (arr) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+    const sorted = [...returns].sort((a, b) => a - b);
+    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const stdDev = Math.sqrt(mean4(returns.map((r) => (r - mean4(returns)) ** 2)));
+    const positiveRate = returns.filter((r) => r > 0).length / Math.max(1, returns.length) * 100;
+    return {
+      iterations: iterationResults.length,
+      symbols: symbols.length,
+      statistics: {
+        meanReturn: Number(mean4(returns).toFixed(2)),
+        medianReturn: Number(median.toFixed(2)),
+        stdDevReturn: Number(stdDev.toFixed(2)),
+        bestReturn: Number(Math.max(...returns).toFixed(2)),
+        worstReturn: Number(Math.min(...returns).toFixed(2)),
+        positiveRate: Number(positiveRate.toFixed(1)),
+        meanWinRate: Number(mean4(winRates).toFixed(1)),
+        meanDrawdown: Number(mean4(drawdowns).toFixed(2)),
+        worstDrawdown: Number(Math.min(...drawdowns).toFixed(2)),
+        meanTrades: Number(mean4(trades).toFixed(1)),
+        totalTrades: trades.reduce((s, v) => s + v, 0)
+      },
+      distribution: {
+        returns: iterationResults.map((r) => r.avgReturn),
+        drawdowns: iterationResults.map((r) => r.maxDrawdown)
+      }
+    };
   })
 });
 function extractRulesFromRoot(root) {

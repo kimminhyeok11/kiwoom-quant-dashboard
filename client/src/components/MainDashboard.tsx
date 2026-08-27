@@ -20,6 +20,7 @@ import { MockTradingControlPanel } from "./MockTradingControlPanel";
 import { DataStatus } from "./DataStatus";
 import { DayTradingExperimentPanel } from "./DayTradingExperimentPanel";
 import { DayTradeBacktest } from "./DayTradeBacktest";
+import { StrategyCompare } from "./StrategyCompare";
 import { PatternLearning } from "./PatternLearning";
 import { ConditionBuilderPage } from "../pages/ConditionBuilderPage";
 import { HomeSummary } from "./HomeSummary";
@@ -51,6 +52,7 @@ type SubPage =
   | "pattern-learn"
   | "daily-backtest"
   | "intraday-backtest"
+  | "strategy-compare"
   | "chart-analysis"
   | "mock-trading"
   | "control-panel"
@@ -95,6 +97,7 @@ const NAV: NavItem[] = [
     subPages: [
       { id: "daily-backtest", label: "일봉 검증", icon: FlaskConical },
       { id: "intraday-backtest", label: "분봉 검증", icon: Timer },
+      { id: "strategy-compare", label: "전략 비교", icon: BarChart3 },
       { id: "chart-analysis", label: "차트 분석", icon: BarChart3 },
     ],
   },
@@ -386,6 +389,7 @@ export function MainDashboard() {
         {/* Validate (성과 검증) */}
         {section === "validate" && subPage === "daily-backtest" && <OneClickBacktest />}
         {section === "validate" && subPage === "intraday-backtest" && <DayTradeBacktest />}
+        {section === "validate" && subPage === "strategy-compare" && <StrategyCompare />}
         {section === "validate" && subPage === "chart-analysis" && <ChartPage />}
 
         {/* Execute (실전 운용) */}

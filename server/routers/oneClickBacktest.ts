@@ -53,16 +53,9 @@ function aggregateDailyBars(bars: DailyBar[], timeframe: "daily" | "weekly" | "m
 }
 
 const ALL_RULE_TYPES: ConditionRule["type"][] = [
-  // 추세/모멘텀 지표
-  "macd_rising", "macd_histogram", "ma_position", "high_return", "close_change", "disparity",
-  // 과매수/과매도 지표
-  "rsi", "bollinger", "stochastic", "williams_r", "cci", "envelope",
-  // 변동성 지표
-  "atr_percent", "gap_percent", "gap_up", "gap_down", "intrabar_position",
-  // 거래량/거래대금 지표
-  "volume_ratio", "turnover", "obv", "turnover_ma",
-  // 캔들 패턴
-  "bullish_candle_count", "bearish_candle_count",
+  "macd_rising", "ma_position", "high_return", "turnover",
+  "rsi", "bollinger", "stochastic", "atr_percent",
+  "volume_ratio", "close_change", "gap_percent", "intrabar_position",
 ];
 
 export const oneClickBacktestRouter = router({
@@ -71,11 +64,11 @@ export const oneClickBacktestRouter = router({
    */
   run: publicProcedure
     .input(z.object({
-      /** 생성할 조건식 수 (기본 50) */
-      count: z.number().int().min(1).max(100).default(50),
+      /** 생성할 조건식 수 (기본 10) */
+      count: z.number().int().min(1).max(50).default(10),
       /** 규칙 수 범위 */
-      minRules: z.number().int().min(2).max(15).default(6),
-      maxRules: z.number().int().min(3).max(20).default(10),
+      minRules: z.number().int().min(2).max(10).default(3),
+      maxRules: z.number().int().min(3).max(12).default(6),
       /** 보유 기간 (일) */
       holdingDays: z.number().int().min(1).max(60).default(5),
       /** 수수료율 */
@@ -92,9 +85,9 @@ export const oneClickBacktestRouter = router({
       takeProfitPercent: z.number().min(0).max(50).default(5),
     }).optional())
     .mutation(async ({ input }) => {
-      const count = input?.count ?? 50;
-      const minRules = input?.minRules ?? 6;
-      const maxRules = input?.maxRules ?? 10;
+      const count = input?.count ?? 10;
+      const minRules = input?.minRules ?? 3;
+      const maxRules = input?.maxRules ?? 6;
       const holdingDays = input?.holdingDays ?? 5;
       const feeRate = (input?.feeRate ?? 0.0003) + (input?.slippageBps ?? 8) / 10000;
       const minScore = input?.minScore ?? 50;
@@ -189,7 +182,7 @@ export const oneClickBacktestRouter = router({
         populationSize: count,
         minRules,
         maxRules,
-        maxDepth: 3,
+        maxDepth: 2,
         allowedRuleTypes: ALL_RULE_TYPES,
         requireUniqueRuleTypes: true,
       };
@@ -286,6 +279,11 @@ export const oneClickBacktestRouter = router({
             timeExitCount: sr.result.timeExitCount,
             avgHoldingDays: Number(sr.result.avgHoldingDays.toFixed(1)),
             trades: sr.result.trades.slice(-10), // 최근 10건만
+            equityCurve: sr.result.trades.reduce<Array<{ date: string; equity: number }>>((curve, t, i) => {
+              const prevEquity = i === 0 ? 100 : curve[i - 1].equity;
+              curve.push({ date: t.exitDate, equity: Number((prevEquity * (1 + t.returnPercent / 100)).toFixed(2)) });
+              return curve;
+            }, []),
           })),
         })),
       };
@@ -483,6 +481,112 @@ export const oneClickBacktestRouter = router({
       createdAt: p.createdAt,
     }));
   }),
+
+  /**
+   * 랜덤 기간 검증: 동일 전략을 N회 랜덤 기간으로 반복 백테스트
+   * 과최적화 방지를 위한 핵심 검증
+   */
+  randomValidation: publicProcedure
+    .input(z.object({
+      root: z.unknown(),
+      minimumScore: z.number().int().min(0).max(200),
+      iterations: z.number().int().min(10).max(500).default(50),
+      holdingDays: z.number().int().min(1).max(60).default(5),
+      stopLossPercent: z.number().min(0).max(20).default(3),
+      takeProfitPercent: z.number().min(0).max(50).default(5),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const feeRate = 0.0003 + 8 / 10000; // 수수료 + 슬리피지
+
+      // 종목 로드
+      const allSymbols = await db.selectDistinct({ symbol: localResearchDailyBars.symbol })
+        .from(localResearchDailyBars).where(eq(localResearchDailyBars.adjustmentBasis, "adjusted")).limit(50);
+      if (!allSymbols.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "일봉 데이터가 없습니다." });
+
+      const barsBySymbol: Record<string, DailyBar[]> = {};
+      for (const { symbol } of allSymbols.slice(0, 10)) {
+        const rows = await db.select({ date: localResearchDailyBars.date, open: localResearchDailyBars.open, high: localResearchDailyBars.high, low: localResearchDailyBars.low, close: localResearchDailyBars.close, volume: localResearchDailyBars.volume, turnover: localResearchDailyBars.turnover })
+          .from(localResearchDailyBars).where(and(eq(localResearchDailyBars.symbol, symbol), eq(localResearchDailyBars.adjustmentBasis, "adjusted")))
+          .orderBy(asc(localResearchDailyBars.date)).limit(600);
+        if (rows.length >= 60) barsBySymbol[symbol] = rows.map(r => ({ date: r.date, open: r.open, high: r.high, low: r.low, close: r.close, volume: Number(r.volume), turnover: Number(r.turnover) }));
+      }
+
+      const symbols = Object.keys(barsBySymbol);
+      if (!symbols.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "60봉 이상 데이터가 있는 종목이 없습니다." });
+
+      // N회 랜덤 기간 백테스트
+      const iterationResults: Array<{ iteration: number; avgReturn: number; winRate: number; tradeCount: number; maxDrawdown: number }> = [];
+
+      for (let i = 0; i < input.iterations; i++) {
+        const symbol = symbols[i % symbols.length];
+        const bars = barsBySymbol[symbol];
+        const minBars = 60;
+        const maxStart = Math.max(0, bars.length - minBars);
+        const startIndex = Math.floor(Math.random() * maxStart);
+        const endIndex = Math.min(bars.length, startIndex + minBars + Math.floor(Math.random() * (bars.length - startIndex - minBars)));
+        const slicedBars = bars.slice(startIndex, endIndex);
+
+        if (slicedBars.length < 30) continue;
+
+        const result = runDailyBacktest({
+          bars: slicedBars,
+          expression: input.root as ConditionExpressionGroup,
+          minScore: input.minimumScore,
+          holdingDays: input.holdingDays,
+          feeRate,
+          entryDelayDays: 1,
+          entryTiming: "open",
+          maxOpenGapPercent: 3,
+          stopLossPercent: input.stopLossPercent,
+          takeProfitPercent: input.takeProfitPercent,
+        });
+
+        iterationResults.push({
+          iteration: i + 1,
+          avgReturn: Number(result.totalReturn.toFixed(2)),
+          winRate: Number(result.winRate.toFixed(1)),
+          tradeCount: result.tradeCount,
+          maxDrawdown: Number(result.maxDrawdown.toFixed(2)),
+        });
+      }
+
+      // 통계 계산
+      const returns = iterationResults.map(r => r.avgReturn);
+      const drawdowns = iterationResults.map(r => r.maxDrawdown);
+      const winRates = iterationResults.map(r => r.winRate);
+      const trades = iterationResults.map(r => r.tradeCount);
+
+      const mean = (arr: number[]) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+      const sorted = [...returns].sort((a, b) => a - b);
+      const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+      const stdDev = Math.sqrt(mean(returns.map(r => (r - mean(returns)) ** 2)));
+      const positiveRate = returns.filter(r => r > 0).length / Math.max(1, returns.length) * 100;
+
+      return {
+        iterations: iterationResults.length,
+        symbols: symbols.length,
+        statistics: {
+          meanReturn: Number(mean(returns).toFixed(2)),
+          medianReturn: Number(median.toFixed(2)),
+          stdDevReturn: Number(stdDev.toFixed(2)),
+          bestReturn: Number(Math.max(...returns).toFixed(2)),
+          worstReturn: Number(Math.min(...returns).toFixed(2)),
+          positiveRate: Number(positiveRate.toFixed(1)),
+          meanWinRate: Number(mean(winRates).toFixed(1)),
+          meanDrawdown: Number(mean(drawdowns).toFixed(2)),
+          worstDrawdown: Number(Math.min(...drawdowns).toFixed(2)),
+          meanTrades: Number(mean(trades).toFixed(1)),
+          totalTrades: trades.reduce((s, v) => s + v, 0),
+        },
+        distribution: {
+          returns: iterationResults.map(r => r.avgReturn),
+          drawdowns: iterationResults.map(r => r.maxDrawdown),
+        },
+      };
+    }),
 });
 
 /** genome root에서 flat rules 추출 */
