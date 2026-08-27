@@ -94,7 +94,9 @@ export function OneClickBacktest() {
         ? JSON.stringify(variables).slice(0, 20)
         : "latest";
       setEvolveResults(prev => ({ ...prev, [evolving || "latest"]: data }));
-      toast.success(`${(data as { mutations: unknown[] }).mutations.length}개 변형 생성 완료!`);
+      const mutations = (data as { mutations: Array<{ improvement: number }> }).mutations || [];
+      const best = mutations.length ? Math.max(...mutations.map(m => m.improvement)) : 0;
+      toast.success(best > 0 ? `${mutations.length}개 변형 중 원본 대비 +${best.toFixed(2)}% 개선 발견!` : `${mutations.length}개 변형 생성 완료 — 원본이 이미 최적입니다.`);
       setEvolving(null);
     },
   });
@@ -449,7 +451,7 @@ function ResultCard({
               className="flex items-center gap-1.5 rounded-lg bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-300 transition hover:bg-violet-500/20 disabled:opacity-50"
             >
               <GitBranch size={14} />
-              {isEvolving ? "변형 생성 중..." : "파라미터 변형 (육성)"}
+              {isEvolving ? "최적화 중..." : "조건식 자동 최적화"}
             </button>
             <button
               onClick={() => setShowDeployPanel(!showDeployPanel)}
@@ -633,7 +635,17 @@ function ResultCard({
           {/* Evolution results */}
           {evolveData ? (
             <div className="mt-4 rounded-xl border border-violet-500/20 bg-violet-500/[0.03] p-3">
-              <p className="text-xs font-bold text-violet-200">파라미터 변형 결과</p>
+              <p className="text-xs font-bold text-violet-200">자동 최적화 결과</p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                조건식의 파라미터(기간, 임계값 등)를 랜덤 변형해 백테스트로 비교한 결과입니다.
+                {(() => {
+                  const mutations = (evolveData as { mutations: Array<{ improvement: number }> }).mutations || [];
+                  const bestImprovement = mutations.length ? Math.max(...mutations.map(m => m.improvement)) : 0;
+                  return bestImprovement > 0
+                    ? ` 원본 대비 최대 +${bestImprovement.toFixed(2)}% 개선된 변형을 찾았습니다.`
+                    : " 원본보다 나은 변형을 찾지 못했습니다. 조건식 자체를 변경해보세요.";
+                })()}
+              </p>
               <div className="mt-2 space-y-1">
                 {((evolveData as { mutations: Array<{ rank: number; fingerprint: string; averageReturn: number; improvement: number; mutation?: { key: string; previous: number; next: number } }> }).mutations || []).slice(0, 5).map(m => (
                   <div key={m.fingerprint} className="flex items-center justify-between text-xs">
@@ -641,11 +653,14 @@ function ResultCard({
                       #{m.rank} {m.mutation?.key ?? "?"}: {String(m.mutation?.previous ?? "")} → {String(m.mutation?.next ?? "")}
                     </span>
                     <span className={m.improvement > 0 ? "font-bold text-teal-300" : "text-slate-500"}>
-                      {m.improvement > 0 ? "+" : ""}{m.improvement} ({m.averageReturn >= 0 ? "+" : ""}{m.averageReturn}%)
+                      {m.improvement > 0 ? "+" : ""}{m.improvement.toFixed(2)}% ({m.averageReturn >= 0 ? "+" : ""}{m.averageReturn}%)
                     </span>
                   </div>
                 ))}
               </div>
+              <p className="mt-2 text-[10px] text-slate-500">
+                각 줄: 변경된 파라미터 · 원본 대비 개선 폭(%) · 절대 수익률(%)
+              </p>
             </div>
           ) : null}
         </div>
