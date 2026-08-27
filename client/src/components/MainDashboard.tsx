@@ -16,6 +16,7 @@ import { useLocation } from "wouter";
 import { OneClickBacktest } from "./OneClickBacktest";
 import { ChartPage } from "./ChartPage";
 import { MockTradingDashboard } from "./MockTradingDashboard";
+import { MockTradingControlPanel } from "./MockTradingControlPanel";
 import { DataStatus } from "./DataStatus";
 import { DayTradingExperimentPanel } from "./DayTradingExperimentPanel";
 import { DayTradeBacktest } from "./DayTradeBacktest";
@@ -52,6 +53,7 @@ type SubPage =
   | "intraday-backtest"
   | "chart-analysis"
   | "mock-trading"
+  | "control-panel"
   | "live-monitor"
   | "performance"
   | "data-status";
@@ -103,6 +105,7 @@ const NAV: NavItem[] = [
     description: "검증된 전략으로 모의투자를 실행합니다",
     subPages: [
       { id: "mock-trading", label: "모의투자", icon: TrendingUp },
+      { id: "control-panel", label: "제어판", icon: SlidersHorizontal },
       { id: "live-monitor", label: "실시간 추적", icon: Rocket },
       { id: "performance", label: "성과 리포트", icon: BarChart3 },
     ],
@@ -387,6 +390,7 @@ export function MainDashboard() {
 
         {/* Execute (실전 운용) */}
         {section === "execute" && subPage === "mock-trading" && <MockTradingDashboard />}
+        {section === "execute" && subPage === "control-panel" && <MockTradingControlPanel />}
         {section === "execute" && subPage === "live-monitor" && <DayTradingExperimentPanel />}
         {section === "execute" && subPage === "performance" && <PerformanceReport />}
 

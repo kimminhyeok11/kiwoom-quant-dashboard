@@ -30,19 +30,19 @@ export function MockTradingDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">모의투자 포트폴리오</h1>
-          <p className="mt-1 text-xs text-slate-400">
-            검증된 전략이 키움 모의투자 계좌에서 자동으로 매매됩니다. 진입 방식: 전일 종가 확정 → 다음날 시가 매수.
+          <h1 className="text-lg sm:text-xl font-bold text-white">모의투자 포트폴리오</h1>
+          <p className="mt-1 text-[11px] sm:text-xs text-slate-400 leading-relaxed">
+            검증된 전략이 키움 모의투자 계좌에서 자동 매매됩니다.
             {positions.data?.lastUpdated && (
-              <span className="ml-2 text-slate-500">
-                마지막 동기화: {new Date(positions.data.lastUpdated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+              <span className="block sm:inline sm:ml-2 text-slate-500">
+                동기화: {new Date(positions.data.lastUpdated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
           </p>
         </div>
         <button
           onClick={() => setLocation("/execute/performance")}
-          className="flex items-center gap-1.5 rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs font-medium text-teal-300 transition hover:bg-teal-500/10"
+          className="hidden sm:flex items-center gap-1.5 rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs font-medium text-teal-300 transition hover:bg-teal-500/10"
         >
           <BarChart3 size={14} />
           성과 리포트
@@ -63,9 +63,9 @@ export function MockTradingDashboard() {
         />
         <SummaryCard
           icon={TrendingUp}
-          label="총 평가손익"
+          label="미실현 평가손익"
           value={summary ? `${summary.totalProfitLoss >= 0 ? "+" : ""}${summary.totalProfitLoss.toLocaleString()}원` : "—"}
-          detail={summary ? `${summary.totalProfitLossRate >= 0 ? "+" : ""}${summary.totalProfitLossRate.toFixed(2)}%` : ""}
+          detail={summary ? `${summary.totalProfitLossRate >= 0 ? "+" : ""}${summary.totalProfitLossRate.toFixed(2)}% (보유 중 종목)` : ""}
           tone={summary && summary.totalProfitLoss >= 0 ? "red" : "blue"}
         />
         <SummaryCard
@@ -79,7 +79,7 @@ export function MockTradingDashboard() {
           icon={ShieldCheck}
           label="자동매매 정책"
           value={policy.data ? `${policy.data.totalCapital.toLocaleString()}원` : "미설정"}
-          detail={policy.data ? `최대 ${policy.data.maxConcurrentPositions}종목 · 손절 ${policy.data.stopLossPercent}% · 익절 ${policy.data.takeProfitPercent}% · ${policy.data.entryTiming === "prev_close_next_open" ? "종가확정→시가매수" : "실시간진입"} · 갭 ±${policy.data.maxOpenGapPercent ?? 3}% 방어 · ${policy.data.positionSizingMode === "half_kelly" ? "Half Kelly" : policy.data.positionSizingMode === "kelly" ? "Full Kelly" : policy.data.positionSizingMode === "quarter_kelly" ? "Quarter Kelly" : `고정 ${policy.data.positionSizingFixedPercent ?? 10}%`}` : "정책을 설정하세요"}
+          detail={policy.data ? `${policy.data.maxConcurrentPositions}종목 · SL ${policy.data.stopLossPercent}% · TP ${policy.data.takeProfitPercent}%` : "정책을 설정하세요"}
           tone="violet"
         />
       </div>
@@ -131,7 +131,8 @@ export function MockTradingDashboard() {
           </div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full text-xs">
+            {/* Desktop: table */}
+            <table className="hidden sm:table w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/50 text-left text-slate-500">
                   <th className="px-4 py-2">종목</th>
@@ -162,6 +163,28 @@ export function MockTradingDashboard() {
                 ))}
               </tbody>
             </table>
+            {/* Mobile: card list */}
+            <div className="sm:hidden divide-y divide-slate-800">
+              {positionList.map(pos => (
+                <div key={pos.symbol} className="px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-medium text-white">{pos.name}</span>
+                      <span className="ml-1.5 font-mono text-[10px] text-slate-500">{pos.symbol}</span>
+                    </div>
+                    <span className={`text-xs font-bold ${pos.profitLossRate >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                      {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
+                    <span>{pos.quantity}주 · 평단 {pos.averagePrice.toLocaleString()}</span>
+                    <span className={pos.profitLoss >= 0 ? "text-red-400/80" : "text-blue-400/80"}>
+                      {pos.profitLoss >= 0 ? "+" : ""}{pos.profitLoss.toLocaleString()}원
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </section>
@@ -176,34 +199,33 @@ export function MockTradingDashboard() {
         ) : (
           <div className="space-y-2">
             {orders.slice(0, 20).map(order => (
-              <div key={order.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/30 px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  {order.side === "buy" ? (
-                    <ArrowUpRight className="text-red-400" size={16} />
-                  ) : (
-                    <ArrowDownRight className="text-blue-400" size={16} />
-                  )}
-                  <div>
-                    <span className="text-xs font-medium text-white">{order.name}</span>
-                    <span className="ml-2 font-mono text-[10px] text-slate-500">{order.symbol}</span>
+              <div key={order.id} className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 sm:px-4 py-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    {order.side === "buy" ? (
+                      <ArrowUpRight className="shrink-0 text-red-400" size={14} />
+                    ) : (
+                      <ArrowDownRight className="shrink-0 text-blue-400" size={14} />
+                    )}
+                    <div className="min-w-0">
+                      <span className="text-xs font-medium text-white truncate">{order.name}</span>
+                      <span className="ml-1.5 font-mono text-[10px] text-slate-500 hidden sm:inline">{order.symbol}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-4 text-xs">
-                  <span className="font-mono text-slate-300">{order.quantity}주 × {order.price.toLocaleString()}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    order.status === "filled" ? "bg-teal-500/10 text-teal-300" :
-                    order.status === "submitted" ? "bg-amber-500/10 text-amber-300" :
-                    order.status === "rejected" ? "bg-rose-500/10 text-rose-300" :
-                    "bg-slate-700 text-slate-400"
-                  }`}>
-                    {order.status === "filled" ? "체결" :
-                     order.status === "submitted" ? "전송" :
-                     order.status === "rejected" ? "거부" :
-                     order.status}
-                  </span>
-                  <span className="text-[10px] text-slate-500">
-                    {new Date(order.createdAt).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                  </span>
+                  <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                    <span className="font-mono text-[11px] text-slate-300">{order.quantity}주×{order.price.toLocaleString()}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-medium ${
+                      order.status === "filled" ? "bg-teal-500/10 text-teal-300" :
+                      order.status === "submitted" ? "bg-amber-500/10 text-amber-300" :
+                      order.status === "rejected" ? "bg-rose-500/10 text-rose-300" :
+                      "bg-slate-700 text-slate-400"
+                    }`}>
+                      {order.status === "filled" ? "체결" :
+                       order.status === "submitted" ? "전송" :
+                       order.status === "rejected" ? "거부" :
+                       order.status}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -228,13 +250,13 @@ function SummaryCard({ icon: Icon, label, value, detail, tone }: {
     violet: "text-violet-300",
   };
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4">
+    <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 sm:p-4">
       <div className="flex items-center gap-2">
-        <Icon size={14} className="text-slate-500" />
-        <span className="text-[11px] text-slate-500">{label}</span>
+        <Icon size={14} className="shrink-0 text-slate-500" />
+        <span className="text-[10px] sm:text-[11px] text-slate-500">{label}</span>
       </div>
-      <p className={`mt-2 font-mono text-lg font-bold ${colors[tone]}`}>{value}</p>
-      {detail && <p className="mt-1 text-[10px] text-slate-500">{detail}</p>}
+      <p className={`mt-1.5 sm:mt-2 font-mono text-base sm:text-lg font-bold ${colors[tone]} truncate`}>{value}</p>
+      {detail && <p className="mt-1 text-[9px] sm:text-[10px] text-slate-500 leading-relaxed">{detail}</p>}
     </div>
   );
 }

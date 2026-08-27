@@ -8758,7 +8758,7 @@ function extractRulesFromRoot(root) {
 
 // server/routers/mockTrading.ts
 import { z as z20 } from "zod";
-import { and as and22, desc as desc26, eq as eq32, gte as gte3 } from "drizzle-orm";
+import { and as and22, desc as desc26, eq as eq32, gte as gte3, inArray as inArray9 } from "drizzle-orm";
 import { TRPCError as TRPCError18 } from "@trpc/server";
 init_db();
 init_schema();
@@ -8877,17 +8877,45 @@ var mockTradingRouter = router({
       eq32(orderIntents.status, "filled"),
       gte3(orderIntents.createdAt, todayStart)
     ));
-    const buyTotal = todayOrders.filter((o) => o.side === "buy").reduce((s, o) => s + o.price * o.quantity, 0);
-    const sellTotal = todayOrders.filter((o) => o.side === "sell").reduce((s, o) => s + o.price * o.quantity, 0);
+    const buyOrders = todayOrders.filter((o) => o.side === "buy");
+    const sellOrders = todayOrders.filter((o) => o.side === "sell");
+    const buyTotal = buyOrders.reduce((s, o) => s + o.price * o.quantity, 0);
+    const sellTotal = sellOrders.reduce((s, o) => s + o.price * o.quantity, 0);
     const filledCount = todayOrders.length;
+    let realizedPnl = 0;
+    if (sellOrders.length > 0) {
+      const sellSymbols = Array.from(new Set(sellOrders.map((o) => o.symbol)));
+      const buyHistory = await db.select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity }).from(orderIntents).where(and22(
+        eq32(orderIntents.executionOrigin, "local_node"),
+        eq32(orderIntents.status, "filled"),
+        eq32(orderIntents.side, "buy"),
+        inArray9(orderIntents.symbol, sellSymbols)
+      ));
+      const avgBuyBySymbol = /* @__PURE__ */ new Map();
+      const grouped = /* @__PURE__ */ new Map();
+      for (const b of buyHistory) {
+        const list = grouped.get(b.symbol) ?? [];
+        list.push(b);
+        grouped.set(b.symbol, list);
+      }
+      for (const [symbol, buys] of Array.from(grouped.entries())) {
+        const totalCost = buys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = buys.reduce((s, b) => s + b.quantity, 0);
+        if (totalQty > 0) avgBuyBySymbol.set(symbol, Math.round(totalCost / totalQty));
+      }
+      for (const sell of sellOrders) {
+        const avgBuy = avgBuyBySymbol.get(sell.symbol) ?? sell.price;
+        realizedPnl += (sell.price - avgBuy) * sell.quantity;
+      }
+    }
     return {
       tradingDate: today,
       buyTotal,
       sellTotal,
-      realizedPnl: sellTotal - buyTotal,
+      realizedPnl,
       filledOrderCount: filledCount,
-      buyOrderCount: todayOrders.filter((o) => o.side === "buy").length,
-      sellOrderCount: todayOrders.filter((o) => o.side === "sell").length
+      buyOrderCount: buyOrders.length,
+      sellOrderCount: sellOrders.length
     };
   }),
   /**
@@ -8984,10 +9012,34 @@ var mockTradingRouter = router({
     if (!policy) return { active: false, killSwitch: false, safetyTriggered: false, limits: null, todayStats: null };
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const todayStart = /* @__PURE__ */ new Date(today + "T00:00:00+09:00");
-    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte3(orderIntents.createdAt, todayStart)));
-    const buyTotal = todayOrders.filter((o) => o.side === "buy").reduce((s, o) => s + o.price * o.quantity, 0);
-    const sellTotal = todayOrders.filter((o) => o.side === "sell").reduce((s, o) => s + o.price * o.quantity, 0);
-    const realizedPnl = sellTotal - buyTotal;
+    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status, symbol: orderIntents.symbol }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte3(orderIntents.createdAt, todayStart)));
+    const todaySells = todayOrders.filter((o) => o.side === "sell");
+    let realizedPnl = 0;
+    if (todaySells.length > 0) {
+      const sellSymbols = Array.from(new Set(todaySells.map((o) => o.symbol)));
+      const buyHistory = await db.select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity }).from(orderIntents).where(and22(
+        eq32(orderIntents.executionOrigin, "local_node"),
+        eq32(orderIntents.status, "filled"),
+        eq32(orderIntents.side, "buy"),
+        inArray9(orderIntents.symbol, sellSymbols)
+      ));
+      const avgBuyBySymbol = /* @__PURE__ */ new Map();
+      const grouped = /* @__PURE__ */ new Map();
+      for (const b of buyHistory) {
+        const list = grouped.get(b.symbol) ?? [];
+        list.push(b);
+        grouped.set(b.symbol, list);
+      }
+      for (const [symbol, buys] of Array.from(grouped.entries())) {
+        const totalCost = buys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = buys.reduce((s, b) => s + b.quantity, 0);
+        if (totalQty > 0) avgBuyBySymbol.set(symbol, Math.round(totalCost / totalQty));
+      }
+      for (const sell of todaySells) {
+        const avgBuy = avgBuyBySymbol.get(sell.symbol) ?? sell.price;
+        realizedPnl += (sell.price - avgBuy) * sell.quantity;
+      }
+    }
     const realizedPnlPercent = policy.totalCapital > 0 ? realizedPnl / Number(policy.totalCapital) * 100 : 0;
     const snapshots = await db.select().from(positionSnapshots).orderBy(desc26(positionSnapshots.capturedAt)).limit(50);
     const bySymbol = /* @__PURE__ */ new Map();
@@ -9053,6 +9105,329 @@ var mockTradingRouter = router({
       await db.update(tradingProfiles).set({ killSwitch: false }).where(eq32(tradingProfiles.id, existing.id));
     }
     return { success: true, message: "\uD0AC\uC2A4\uC704\uCE58\uAC00 \uD574\uC81C\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC790\uB3D9\uB9E4\uB9E4\uAC00 \uB2E4\uC2DC \uD65C\uC131\uD654\uB429\uB2C8\uB2E4." };
+  }),
+  /**
+   * 기본 정책 빠른 생성 (정책 없을 때 원클릭 시작용)
+   * 보수적 기본값으로 즉시 활성 정책 생성 + autoTradeEnabled 활성화
+   */
+  quickCreatePolicy: publicProcedure.input(z20.object({
+    totalCapital: z20.number().int().min(1e6).max(1e8).default(1e7)
+  }).optional()).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [existing] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).limit(1);
+    if (existing) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uC774\uBBF8 \uD65C\uC131 \uC815\uCC45\uC774 \uC788\uC2B5\uB2C8\uB2E4." });
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
+    const capital = input?.totalCapital ?? 1e7;
+    const [policy] = await db.insert(autoTradePolicies).values({
+      userId: admin.id,
+      version: 1,
+      status: "active",
+      totalCapital: capital,
+      maxConcurrentPositions: 5,
+      stopLossPercent: "3",
+      takeProfitPercent: "5",
+      dailyLossLimitPercent: "5",
+      entryTiming: "prev_close_next_open",
+      maxOpenGapPercent: "3",
+      positionSizingMode: "half_kelly",
+      positionSizingFixedPercent: "10"
+    }).returning();
+    const existingProfile = (await db.select().from(tradingProfiles).where(eq32(tradingProfiles.userId, admin.id)).limit(1))[0];
+    if (existingProfile) {
+      await db.update(tradingProfiles).set({ autoTradeEnabled: true, killSwitch: false }).where(eq32(tradingProfiles.id, existingProfile.id));
+    } else {
+      await db.insert(tradingProfiles).values({ userId: admin.id, autoTradeEnabled: true, killSwitch: false });
+    }
+    return {
+      policyId: policy.id,
+      version: 1,
+      message: `\uAE30\uBCF8 \uC815\uCC45 \uC0DD\uC131 \uC644\uB8CC (\uC790\uBCF8 ${(capital / 1e4).toFixed(0)}\uB9CC\uC6D0, SL 3%, TP 5%, 5\uC885\uBAA9). \uC790\uB3D9\uB9E4\uB9E4\uAC00 \uD65C\uC131\uD654\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`
+    };
+  }),
+  /**
+   * 자동매매 시작/중지 토글 (프론트엔드 원버튼 제어)
+   * - enabled=true: 활성 정책이 있으면 autoTradeEnabled=true + killSwitch=false
+   * - enabled=false: autoTradeEnabled=false (정책은 유지, 실행만 중단)
+   */
+  toggleAutoTrade: publicProcedure.input(z20.object({ enabled: z20.boolean() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
+    if (input.enabled) {
+      const [policy] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.version)).limit(1);
+      if (!policy) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uD65C\uC131 \uC790\uB3D9\uB9E4\uB9E4 \uC815\uCC45\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uBA3C\uC800 \uC804\uB7B5\uC744 \uBC30\uD3EC\uD558\uC138\uC694." });
+    }
+    const existing = (await db.select().from(tradingProfiles).where(eq32(tradingProfiles.userId, admin.id)).limit(1))[0];
+    if (existing) {
+      await db.update(tradingProfiles).set({
+        autoTradeEnabled: input.enabled,
+        killSwitch: input.enabled ? false : existing.killSwitch
+      }).where(eq32(tradingProfiles.id, existing.id));
+    } else {
+      await db.insert(tradingProfiles).values({
+        userId: admin.id,
+        autoTradeEnabled: input.enabled,
+        killSwitch: false
+      });
+    }
+    return {
+      enabled: input.enabled,
+      message: input.enabled ? "\uC790\uB3D9\uB9E4\uB9E4\uAC00 \uD65C\uC131\uD654\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC218\uC9D1\uAE30 \uB2E4\uC74C \uC2E4\uD589 \uC2DC \uC8FC\uBB38\uC774 \uC0DD\uC131\uB429\uB2C8\uB2E4." : "\uC790\uB3D9\uB9E4\uB9E4\uAC00 \uC77C\uC2DC\uC815\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC815\uCC45\uC740 \uC720\uC9C0\uB418\uBA70 \uC218\uC9D1\uAE30\uAC00 \uC8FC\uBB38\uC744 \uC0DD\uC131\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
+    };
+  }),
+  /**
+   * 현재 활성 정책 파라미터 직접 수정 (프론트엔드 설정 패널)
+   * 기존 정책을 superseded하고 수정된 값으로 새 버전 생성
+   */
+  updatePolicyParams: publicProcedure.input(z20.object({
+    totalCapital: z20.number().int().min(1e6).max(1e8).optional(),
+    maxConcurrentPositions: z20.number().int().min(1).max(10).optional(),
+    stopLossPercent: z20.number().min(0.5).max(20).optional(),
+    takeProfitPercent: z20.number().min(0.5).max(50).optional(),
+    dailyLossLimitPercent: z20.number().min(0.5).max(30).optional(),
+    entryTiming: z20.enum(["prev_close_next_open", "intraday_realtime"]).optional(),
+    maxOpenGapPercent: z20.number().min(0.5).max(20).optional(),
+    positionSizingMode: z20.enum(["kelly", "half_kelly", "quarter_kelly", "fixed_percent"]).optional(),
+    positionSizingFixedPercent: z20.number().min(1).max(100).optional()
+  })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [current] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.version)).limit(1);
+    if (!current) throw new TRPCError18({ code: "NOT_FOUND", message: "\uC218\uC815\uD560 \uD65C\uC131 \uC815\uCC45\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uBA3C\uC800 \uC804\uB7B5\uC744 \uBC30\uD3EC\uD558\uC138\uC694." });
+    await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq32(autoTradePolicies.id, current.id));
+    const version = current.version + 1;
+    const [newPolicy] = await db.insert(autoTradePolicies).values({
+      userId: current.userId,
+      version,
+      status: "active",
+      totalCapital: input.totalCapital ?? current.totalCapital,
+      maxConcurrentPositions: input.maxConcurrentPositions ?? current.maxConcurrentPositions,
+      stopLossPercent: String(input.stopLossPercent ?? Number(current.stopLossPercent)),
+      takeProfitPercent: String(input.takeProfitPercent ?? Number(current.takeProfitPercent)),
+      dailyLossLimitPercent: String(input.dailyLossLimitPercent ?? Number(current.dailyLossLimitPercent)),
+      entryTiming: input.entryTiming ?? current.entryTiming ?? "prev_close_next_open",
+      maxOpenGapPercent: String(input.maxOpenGapPercent ?? Number(current.maxOpenGapPercent ?? "3")),
+      positionSizingMode: input.positionSizingMode ?? current.positionSizingMode ?? "half_kelly",
+      positionSizingFixedPercent: String(input.positionSizingFixedPercent ?? Number(current.positionSizingFixedPercent ?? "10"))
+    }).returning();
+    return {
+      policyId: newPolicy.id,
+      version,
+      message: `\uC815\uCC45 v${version}\uC774 \uC801\uC6A9\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`,
+      params: {
+        totalCapital: newPolicy.totalCapital,
+        maxConcurrentPositions: newPolicy.maxConcurrentPositions,
+        stopLossPercent: Number(newPolicy.stopLossPercent),
+        takeProfitPercent: Number(newPolicy.takeProfitPercent),
+        dailyLossLimitPercent: Number(newPolicy.dailyLossLimitPercent),
+        entryTiming: newPolicy.entryTiming,
+        maxOpenGapPercent: Number(newPolicy.maxOpenGapPercent),
+        positionSizingMode: newPolicy.positionSizingMode,
+        positionSizingFixedPercent: Number(newPolicy.positionSizingFixedPercent)
+      }
+    };
+  }),
+  /**
+   * 피드백 루프 결과 이력 조회
+   * autoTradePolicies 버전 이력에서 조정 내역을 추적
+   */
+  feedbackHistory: publicProcedure.input(z20.object({ limit: z20.number().int().min(1).max(50).default(10) }).optional()).query(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const limit = input?.limit ?? 10;
+    const policies = await db.select().from(autoTradePolicies).orderBy(desc26(autoTradePolicies.version)).limit(limit);
+    const history = policies.map((p, idx) => {
+      const prev = policies[idx + 1];
+      const changes = [];
+      if (prev) {
+        if (Number(p.stopLossPercent) !== Number(prev.stopLossPercent))
+          changes.push({ param: "stopLoss", from: Number(prev.stopLossPercent), to: Number(p.stopLossPercent) });
+        if (Number(p.takeProfitPercent) !== Number(prev.takeProfitPercent))
+          changes.push({ param: "takeProfit", from: Number(prev.takeProfitPercent), to: Number(p.takeProfitPercent) });
+        if (p.maxConcurrentPositions !== prev.maxConcurrentPositions)
+          changes.push({ param: "maxPositions", from: prev.maxConcurrentPositions, to: p.maxConcurrentPositions });
+        if (p.totalCapital !== prev.totalCapital)
+          changes.push({ param: "totalCapital", from: prev.totalCapital, to: p.totalCapital });
+      }
+      return {
+        id: p.id,
+        version: p.version,
+        status: p.status,
+        totalCapital: p.totalCapital,
+        maxConcurrentPositions: p.maxConcurrentPositions,
+        stopLossPercent: Number(p.stopLossPercent),
+        takeProfitPercent: Number(p.takeProfitPercent),
+        dailyLossLimitPercent: Number(p.dailyLossLimitPercent),
+        entryTiming: p.entryTiming,
+        positionSizingMode: p.positionSizingMode,
+        createdAt: p.createdAt,
+        changes
+      };
+    });
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
+    const recentFilled = await db.select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity }).from(orderIntents).where(and22(
+      eq32(orderIntents.executionOrigin, "local_node"),
+      eq32(orderIntents.status, "filled"),
+      gte3(orderIntents.createdAt, thirtyDaysAgo)
+    ));
+    const buys = recentFilled.filter((o) => o.side === "buy");
+    const sells = recentFilled.filter((o) => o.side === "sell");
+    const buyTotal = buys.reduce((s, o) => s + o.price * o.quantity, 0);
+    const sellTotal = sells.reduce((s, o) => s + o.price * o.quantity, 0);
+    return {
+      history,
+      summary: {
+        totalTrades30d: recentFilled.length,
+        buyCount: buys.length,
+        sellCount: sells.length,
+        netPnl30d: sellTotal - buyTotal,
+        policyVersions: policies.length,
+        currentVersion: policies[0]?.version ?? 0
+      }
+    };
+  }),
+  /**
+   * 투자 성과 한눈에 보기 (전체 기간 누적 + 최근 30일)
+   */
+  tradingSummary: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const allFilled = await db.select({
+      side: orderIntents.side,
+      price: orderIntents.price,
+      quantity: orderIntents.quantity,
+      symbol: orderIntents.symbol,
+      createdAt: orderIntents.createdAt
+    }).from(orderIntents).where(and22(
+      eq32(orderIntents.executionOrigin, "local_node"),
+      eq32(orderIntents.status, "filled")
+    )).orderBy(orderIntents.createdAt);
+    if (allFilled.length === 0) {
+      return {
+        hasData: false,
+        startDate: null,
+        totalDays: 0,
+        totalCapitalDeployed: 0,
+        totalTrades: 0,
+        totalBuys: 0,
+        totalSells: 0,
+        realizedPnl: 0,
+        realizedPnlPercent: 0,
+        winCount: 0,
+        lossCount: 0,
+        winRate: 0,
+        avgWinPercent: 0,
+        avgLossPercent: 0,
+        bestTrade: null,
+        worstTrade: null
+      };
+    }
+    const startDate = allFilled[0].createdAt;
+    const totalDays = Math.max(1, Math.ceil((Date.now() - new Date(startDate).getTime()) / (24 * 60 * 60 * 1e3)));
+    const bySymbol = /* @__PURE__ */ new Map();
+    for (const o of allFilled) {
+      const entry = bySymbol.get(o.symbol) ?? { buys: [], sells: [] };
+      if (o.side === "buy") entry.buys.push(o);
+      else entry.sells.push(o);
+      bySymbol.set(o.symbol, entry);
+    }
+    let totalRealizedPnl = 0;
+    let winCount = 0;
+    let lossCount = 0;
+    let totalWinPct = 0;
+    let totalLossPct = 0;
+    let bestReturn = -Infinity;
+    let worstReturn = Infinity;
+    let bestTrade = null;
+    let worstTrade = null;
+    for (const [symbol, { buys, sells }] of Array.from(bySymbol.entries())) {
+      const sortedBuys = buys.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      const sortedSells = sells.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      const pairs = Math.min(sortedBuys.length, sortedSells.length);
+      for (let i = 0; i < pairs; i++) {
+        const buy = sortedBuys[i];
+        const sell = sortedSells[i];
+        const qty = Math.min(buy.quantity, sell.quantity);
+        const pnl = (sell.price - buy.price) * qty;
+        const returnPct = buy.price > 0 ? (sell.price - buy.price) / buy.price * 100 : 0;
+        totalRealizedPnl += pnl;
+        if (pnl >= 0) {
+          winCount++;
+          totalWinPct += returnPct;
+        } else {
+          lossCount++;
+          totalLossPct += Math.abs(returnPct);
+        }
+        if (returnPct > bestReturn) {
+          bestReturn = returnPct;
+          bestTrade = { symbol, returnPct: Number(returnPct.toFixed(2)) };
+        }
+        if (returnPct < worstReturn) {
+          worstReturn = returnPct;
+          worstTrade = { symbol, returnPct: Number(returnPct.toFixed(2)) };
+        }
+      }
+    }
+    const totalRoundTrips = winCount + lossCount;
+    const totalBuys = allFilled.filter((o) => o.side === "buy");
+    const totalCapitalDeployed = totalBuys.reduce((s, o) => s + o.price * o.quantity, 0);
+    return {
+      hasData: true,
+      startDate,
+      totalDays,
+      totalCapitalDeployed,
+      totalTrades: allFilled.length,
+      totalBuys: totalBuys.length,
+      totalSells: allFilled.filter((o) => o.side === "sell").length,
+      realizedPnl: totalRealizedPnl,
+      realizedPnlPercent: totalCapitalDeployed > 0 ? Number((totalRealizedPnl / totalCapitalDeployed * 100).toFixed(2)) : 0,
+      winCount,
+      lossCount,
+      winRate: totalRoundTrips > 0 ? Number((winCount / totalRoundTrips * 100).toFixed(1)) : 0,
+      avgWinPercent: winCount > 0 ? Number((totalWinPct / winCount).toFixed(2)) : 0,
+      avgLossPercent: lossCount > 0 ? Number((totalLossPct / lossCount).toFixed(2)) : 0,
+      bestTrade: bestReturn > -Infinity ? bestTrade : null,
+      worstTrade: worstReturn < Infinity ? worstTrade : null
+    };
+  }),
+  /**
+   * 자동매매 프로필 전체 상태 (컨트롤 패널 메인 조회)
+   */
+  controlPanelStatus: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    let profile = null;
+    if (admin) {
+      const existing = (await db.select().from(tradingProfiles).where(eq32(tradingProfiles.userId, admin.id)).limit(1))[0];
+      if (existing) profile = { autoTradeEnabled: existing.autoTradeEnabled ?? false, killSwitch: existing.killSwitch ?? false };
+    }
+    const [policy] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.version)).limit(1);
+    return {
+      autoTradeEnabled: profile?.autoTradeEnabled ?? false,
+      killSwitch: profile?.killSwitch ?? false,
+      hasActivePolicy: Boolean(policy),
+      policy: policy ? {
+        id: policy.id,
+        version: policy.version,
+        totalCapital: policy.totalCapital,
+        maxConcurrentPositions: policy.maxConcurrentPositions,
+        stopLossPercent: Number(policy.stopLossPercent),
+        takeProfitPercent: Number(policy.takeProfitPercent),
+        dailyLossLimitPercent: Number(policy.dailyLossLimitPercent),
+        entryTiming: policy.entryTiming ?? "prev_close_next_open",
+        maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"),
+        positionSizingMode: policy.positionSizingMode ?? "half_kelly",
+        positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10"),
+        createdAt: policy.createdAt
+      } : null
+    };
   })
 });
 
@@ -9381,7 +9756,7 @@ var conditionBuilderRouter = router({
 
 // server/routers/intradayBacktest.ts
 import { z as z22 } from "zod";
-import { and as and24, asc as asc9, desc as desc28, eq as eq34, inArray as inArray9 } from "drizzle-orm";
+import { and as and24, asc as asc9, desc as desc28, eq as eq34, inArray as inArray10 } from "drizzle-orm";
 import { TRPCError as TRPCError20 } from "@trpc/server";
 init_db();
 init_schema();
@@ -9601,7 +9976,7 @@ var intradayBacktestRouter = router({
     const db = await getDb();
     if (!db) throw new TRPCError20({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
     const feeRate = input.feeRate + input.slippageBps / 1e4;
-    const whereCondition = input.symbols?.length ? and24(eq34(intradayMinuteBars.tradingDate, input.tradingDate), inArray9(intradayMinuteBars.symbol, input.symbols)) : eq34(intradayMinuteBars.tradingDate, input.tradingDate);
+    const whereCondition = input.symbols?.length ? and24(eq34(intradayMinuteBars.tradingDate, input.tradingDate), inArray10(intradayMinuteBars.symbol, input.symbols)) : eq34(intradayMinuteBars.tradingDate, input.tradingDate);
     const rawBars = await db.select({
       symbol: intradayMinuteBars.symbol,
       minuteAt: intradayMinuteBars.minuteAt,
@@ -10285,7 +10660,7 @@ var patternLearningRouter = router({
 
 // server/routers/dataCollection.ts
 import { z as z24 } from "zod";
-import { and as and26, desc as desc29, eq as eq36, inArray as inArray10 } from "drizzle-orm";
+import { and as and26, desc as desc29, eq as eq36, inArray as inArray11 } from "drizzle-orm";
 import { TRPCError as TRPCError22 } from "@trpc/server";
 init_db();
 init_schema();
@@ -10300,7 +10675,7 @@ var dataCollectionRouter = router({
   }).optional()).mutation(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError22({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
-    const [active] = await db.select().from(localDailyCollectionRequests).where(inArray10(localDailyCollectionRequests.status, ["queued", "running"])).orderBy(desc29(localDailyCollectionRequests.requestedAt)).limit(1);
+    const [active] = await db.select().from(localDailyCollectionRequests).where(inArray11(localDailyCollectionRequests.status, ["queued", "running"])).orderBy(desc29(localDailyCollectionRequests.requestedAt)).limit(1);
     if (active) {
       return {
         status: active.status,
@@ -10333,7 +10708,7 @@ var dataCollectionRouter = router({
     const tradingDate2 = input?.tradingDate ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const [active] = await db.select().from(localMinuteCollectionRequests).where(and26(
       eq36(localMinuteCollectionRequests.tradingDate, tradingDate2),
-      inArray10(localMinuteCollectionRequests.status, ["queued", "running"])
+      inArray11(localMinuteCollectionRequests.status, ["queued", "running"])
     )).orderBy(desc29(localMinuteCollectionRequests.requestedAt)).limit(1);
     if (active) {
       return {
@@ -10863,7 +11238,7 @@ var strategyQualityRouter = router({
 
 // server/routers/bulkMinuteCollection.ts
 init_schema();
-import { desc as desc33, eq as eq40, inArray as inArray11 } from "drizzle-orm";
+import { desc as desc33, eq as eq40, inArray as inArray12 } from "drizzle-orm";
 import { z as z26 } from "zod";
 init_db();
 
@@ -11147,7 +11522,7 @@ var bulkMinuteCollectionRouter = router({
     const db = await requireDb14();
     const symbols = input?.symbols ?? DEFAULT_SYMBOLS;
     const targetDays = input?.targetDays ?? 60;
-    const [active] = await db.select().from(bulkMinuteCollectionRequests).where(inArray11(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc33(bulkMinuteCollectionRequests.requestedAt)).limit(1);
+    const [active] = await db.select().from(bulkMinuteCollectionRequests).where(inArray12(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc33(bulkMinuteCollectionRequests.requestedAt)).limit(1);
     if (active) return { status: "reused", requestId: active.id, totalSymbols: active.totalSymbols, completedSymbols: active.completedSymbols };
     const [created] = await db.insert(bulkMinuteCollectionRequests).values({
       symbolsJson: symbols,
@@ -11182,7 +11557,7 @@ var bulkMinuteCollectionRouter = router({
   /** 로컬 노드용: 대기 중인 수집 요청 가져오기 (publicProcedure — 노드 토큰으로 인증) */
   pending: publicProcedure.query(async () => {
     const db = await requireDb14();
-    const [pending] = await db.select().from(bulkMinuteCollectionRequests).where(inArray11(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc33(bulkMinuteCollectionRequests.requestedAt)).limit(1);
+    const [pending] = await db.select().from(bulkMinuteCollectionRequests).where(inArray12(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc33(bulkMinuteCollectionRequests.requestedAt)).limit(1);
     if (!pending) return null;
     return {
       id: pending.id,
@@ -11306,7 +11681,7 @@ async function createContext(opts) {
 init_schema();
 import { timingSafeEqual } from "crypto";
 import { createHash as createHash7 } from "node:crypto";
-import { and as and30, asc as asc12, count as count2, desc as desc34, eq as eq41, inArray as inArray12, like as like5, ne, sql as sql10 } from "drizzle-orm";
+import { and as and30, asc as asc12, count as count2, desc as desc34, eq as eq41, inArray as inArray13, like as like5, ne, sql as sql10 } from "drizzle-orm";
 init_db();
 var RESEARCH_NODE_TOKEN_HEADER = "x-research-node-token";
 var TERMINAL_CONNECTION_HANDLER_VERSION = "terminal-sync-owner-fallback-v2";
@@ -12162,7 +12537,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!requestedSymbols.length || !adjustmentBasis) return response.status(400).json({ status: "invalid_request", message: "6\uC790\uB9AC symbol \uB610\uB294 symbols \uBC30\uC5F4\uACFC adjustmentBasis\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const bars = await db.select().from(localResearchDailyBars).where(and30(inArray12(localResearchDailyBars.symbol, requestedSymbols), eq41(localResearchDailyBars.adjustmentBasis, adjustmentBasis))).orderBy(asc12(localResearchDailyBars.symbol), asc12(localResearchDailyBars.date));
+    const bars = await db.select().from(localResearchDailyBars).where(and30(inArray13(localResearchDailyBars.symbol, requestedSymbols), eq41(localResearchDailyBars.adjustmentBasis, adjustmentBasis))).orderBy(asc12(localResearchDailyBars.symbol), asc12(localResearchDailyBars.date));
     const barCountBySymbol = /* @__PURE__ */ new Map();
     for (const bar of bars) barCountBySymbol.set(bar.symbol, (barCountBySymbol.get(bar.symbol) ?? 0) + 1);
     const insufficientSymbols = requestedSymbols.filter((symbol) => (barCountBySymbol.get(symbol) ?? 0) < 85);
@@ -12306,7 +12681,7 @@ function registerLocalResearchNodeRoutes(app2) {
     const positions = experiment ? await db.select().from(dayTradeExperimentPositions).where(eq41(dayTradeExperimentPositions.experimentId, experiment.id)) : [];
     const isExperimentActive = experiment?.status === "tracking";
     const candidateIds = Array.from(new Set(positions.map((position) => position.candidateId)));
-    const candidates = candidateIds.length ? await db.select({ id: autonomousResearchCandidates.id, fitnessScore: autonomousResearchCandidates.fitnessScore }).from(autonomousResearchCandidates).where(inArray12(autonomousResearchCandidates.id, candidateIds)) : [];
+    const candidates = candidateIds.length ? await db.select({ id: autonomousResearchCandidates.id, fitnessScore: autonomousResearchCandidates.fitnessScore }).from(autonomousResearchCandidates).where(inArray13(autonomousResearchCandidates.id, candidateIds)) : [];
     const fitnessByCandidateId = new Map(candidates.map((candidate) => [candidate.id, Number(candidate.fitnessScore ?? 0)]));
     const plan = experiment && isExperimentActive ? buildLocalAutoOrderPlan({
       experimentId: experiment.id,
@@ -12388,7 +12763,7 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable" });
-    const [pending] = await db.select().from(bulkMinuteCollectionRequests).where(inArray12(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc34(bulkMinuteCollectionRequests.requestedAt)).limit(1);
+    const [pending] = await db.select().from(bulkMinuteCollectionRequests).where(inArray13(bulkMinuteCollectionRequests.status, ["queued", "running"])).orderBy(desc34(bulkMinuteCollectionRequests.requestedAt)).limit(1);
     if (!pending) return response.json({ status: "idle", message: "\uB300\uAE30 \uC911\uC778 \uBC8C\uD06C \uC218\uC9D1 \uC694\uCCAD\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
     if (pending.status === "queued") {
       await db.update(bulkMinuteCollectionRequests).set({ status: "running", startedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq41(bulkMinuteCollectionRequests.id, pending.id));
@@ -12435,6 +12810,158 @@ function registerLocalResearchNodeRoutes(app2) {
     }
     await db.update(bulkMinuteCollectionRequests).set(updateData).where(eq41(bulkMinuteCollectionRequests.id, requestId));
     return response.json({ status: "updated", requestId });
+  });
+  app2.post("/api/local-research-node/trade-result-sync", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const body = request.body;
+    if (!body?.tradingDate || !Array.isArray(body.orders)) return response.status(400).json({ status: "invalid_request" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+    const [admin] = await db.select({ id: users.id }).from(users).where(eq41(users.role, "admin")).limit(1);
+    if (!admin) return response.status(500).json({ status: "no_admin" });
+    const accepted = [];
+    for (const raw of body.orders) {
+      const o = raw;
+      const side = o.side === "sell" ? "sell" : "buy";
+      const symbol = String(o.symbol ?? "").trim();
+      const name = String(o.name ?? symbol);
+      const quantity = Number(o.quantity) || 0;
+      const price = Number(o.price) || 0;
+      const dedupeKey = String(o.dedupeKey ?? `sim-${side}-${symbol}-${body.tradingDate}-${Date.now()}`);
+      if (!symbol || quantity <= 0 || price <= 0) continue;
+      try {
+        const [intent] = await db.insert(orderIntents).values({
+          userId: admin.id,
+          symbol,
+          name,
+          side,
+          orderType: "limit",
+          quantity,
+          price,
+          amount: quantity * price,
+          status: "filled",
+          executionOrigin: "local_node",
+          dedupeKey
+        }).onConflictDoNothing().returning();
+        if (intent) accepted.push(intent.id);
+      } catch {
+      }
+    }
+    if (Array.isArray(body.positions)) {
+      for (const raw of body.positions) {
+        const p = raw;
+        const symbol = String(p.symbol ?? "").trim();
+        if (!symbol) continue;
+        try {
+          await db.insert(positionSnapshots).values({
+            userId: admin.id,
+            symbol,
+            name: String(p.name ?? symbol),
+            quantity: Math.floor(Number(p.quantity) || 0),
+            averagePrice: Math.floor(Number(p.averagePrice) || 0),
+            currentPrice: Math.floor(Number(p.currentPrice) || 0),
+            profitLoss: Math.floor(Number(p.profitLoss) || 0),
+            profitLossRate: String(Number(p.profitLossRate) || 0)
+          });
+        } catch {
+        }
+      }
+    }
+    const recentOrders = await db.select({ side: orderIntents.side, price: orderIntents.price, symbol: orderIntents.symbol, createdAt: orderIntents.createdAt }).from(orderIntents).where(and30(eq41(orderIntents.executionOrigin, "local_node"), eq41(orderIntents.status, "filled"))).orderBy(desc34(orderIntents.createdAt)).limit(200);
+    const bySymbol = /* @__PURE__ */ new Map();
+    for (const o of recentOrders) {
+      const list = bySymbol.get(o.symbol) ?? [];
+      list.push(o);
+      bySymbol.set(o.symbol, list);
+    }
+    const roundTrips = [];
+    for (const [, trades] of Array.from(bySymbol.entries())) {
+      const buys = trades.filter((t2) => t2.side === "buy").sort((a, b2) => a.createdAt.getTime() - b2.createdAt.getTime());
+      const sells = trades.filter((t2) => t2.side === "sell").sort((a, b2) => a.createdAt.getTime() - b2.createdAt.getTime());
+      for (let i = 0; i < Math.min(buys.length, sells.length); i++) {
+        roundTrips.push({ returnPct: (sells[i].price - buys[i].price) / buys[i].price * 100 });
+      }
+    }
+    const wins = roundTrips.filter((t2) => t2.returnPct > 0);
+    const losses = roundTrips.filter((t2) => t2.returnPct <= 0);
+    const winRate = roundTrips.length > 0 ? wins.length / roundTrips.length : 0.5;
+    const avgWin = wins.length > 0 ? wins.reduce((s, t2) => s + t2.returnPct, 0) / wins.length : 3;
+    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t2) => s + t2.returnPct, 0) / losses.length) : 2;
+    const lossValues = losses.map((t2) => Math.abs(t2.returnPct)).sort((a, b2) => a - b2);
+    const winValues = wins.map((t2) => t2.returnPct).sort((a, b2) => a - b2);
+    const optimalSL = lossValues.length >= 3 ? lossValues[Math.floor(lossValues.length * 0.75)] : 3;
+    const optimalTP = winValues.length >= 3 ? winValues[Math.floor(winValues.length * 0.5)] : 5;
+    const b = avgLoss > 0 ? avgWin / avgLoss : 1;
+    const kelly = Math.max(0, (winRate * b - (1 - winRate)) / b);
+    const feedback = {
+      roundTrips: roundTrips.length,
+      winRate: Number((winRate * 100).toFixed(1)),
+      avgWinPct: Number(avgWin.toFixed(2)),
+      avgLossPct: Number(avgLoss.toFixed(2)),
+      profitFactor: avgLoss > 0 ? Number((avgWin * wins.length / (avgLoss * losses.length)).toFixed(2)) : null,
+      optimal: {
+        stopLossPct: Number(Math.min(5, Math.max(1.5, optimalSL)).toFixed(1)),
+        takeProfitPct: Number(Math.min(10, Math.max(2, optimalTP)).toFixed(1)),
+        kellyFraction: Number(kelly.toFixed(3)),
+        maxPositions: kelly >= 0.2 ? 3 : kelly >= 0.1 ? 5 : 7
+      }
+    };
+    return response.json({ status: "synced", accepted: accepted.length, feedback });
+  });
+  app2.get("/api/local-research-node/strategy-config", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+    const [policy] = await db.select().from(autoTradePolicies).where(eq41(autoTradePolicies.status, "active")).orderBy(desc34(autoTradePolicies.updatedAt)).limit(1);
+    const recentOrders = await db.select({ side: orderIntents.side, price: orderIntents.price, symbol: orderIntents.symbol, createdAt: orderIntents.createdAt }).from(orderIntents).where(and30(eq41(orderIntents.executionOrigin, "local_node"), eq41(orderIntents.status, "filled"))).orderBy(desc34(orderIntents.createdAt)).limit(200);
+    const bySymbol = /* @__PURE__ */ new Map();
+    for (const o of recentOrders) {
+      const list = bySymbol.get(o.symbol) ?? [];
+      list.push(o);
+      bySymbol.set(o.symbol, list);
+    }
+    const roundTrips = [];
+    for (const [, trades] of Array.from(bySymbol.entries())) {
+      const buys = trades.filter((t2) => t2.side === "buy").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const sells = trades.filter((t2) => t2.side === "sell").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      for (let i = 0; i < Math.min(buys.length, sells.length); i++) {
+        roundTrips.push({ returnPct: (sells[i].price - buys[i].price) / buys[i].price * 100 });
+      }
+    }
+    const wins = roundTrips.filter((t2) => t2.returnPct > 0);
+    const losses = roundTrips.filter((t2) => t2.returnPct <= 0);
+    const winRate = roundTrips.length >= 10 ? wins.length / roundTrips.length : 0.5;
+    const avgWin = wins.length ? wins.reduce((s, t2) => s + t2.returnPct, 0) / wins.length : 3;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((s, t2) => s + t2.returnPct, 0) / losses.length) : 2;
+    const lossValues = losses.map((t2) => Math.abs(t2.returnPct)).sort((a, b) => a - b);
+    const winValues = wins.map((t2) => t2.returnPct).sort((a, b) => a - b);
+    const hasEnoughData = roundTrips.length >= 10;
+    const config = {
+      policy: policy ? {
+        totalCapital: policy.totalCapital,
+        maxPositions: policy.maxConcurrentPositions,
+        stopLossPct: Number(policy.stopLossPercent),
+        takeProfitPct: Number(policy.takeProfitPercent)
+      } : { totalCapital: 1e7, maxPositions: 5, stopLossPct: 3, takeProfitPct: 5 },
+      optimized: hasEnoughData ? {
+        stopLossPct: Number(Math.min(5, Math.max(1.5, lossValues[Math.floor(lossValues.length * 0.75)] ?? 3)).toFixed(1)),
+        takeProfitPct: Number(Math.min(10, Math.max(2, winValues[Math.floor(winValues.length * 0.5)] ?? 5)).toFixed(1)),
+        entryThreshold: winRate >= 0.5 ? -1.5 : -2,
+        // 승률 높으면 진입 느슨, 낮으면 까다롭게
+        maxPositionPct: 30
+        // 저가 위치 기준
+      } : null,
+      signal: {
+        // 조건식 파라미터 — 피드백 기반 조정
+        minDropPct: hasEnoughData && winRate >= 0.5 ? -1.2 : -1.5,
+        maxLowPosition: hasEnoughData && winRate >= 0.5 ? 0.35 : 0.3,
+        minPrice: 1e3
+      },
+      stats: { roundTrips: roundTrips.length, winRate: Number((winRate * 100).toFixed(1)), avgWin: Number(avgWin.toFixed(2)), avgLoss: Number(avgLoss.toFixed(2)) }
+    };
+    return response.json({ status: "ok", config });
   });
 }
 

@@ -48,7 +48,7 @@ export function LiveTradingMonitor() {
           <button
             onClick={() => stopMutation.mutate()}
             disabled={stopMutation.isPending}
-            className="flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 transition hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
           >
             <Power size={12} />
             {stopMutation.isPending ? "중지 중..." : "자동매매 중지"}
@@ -67,7 +67,7 @@ export function LiveTradingMonitor() {
             <button
               onClick={() => resetKillMutation.mutate()}
               disabled={resetKillMutation.isPending}
-              className="rounded-md bg-rose-500/10 px-3 py-1 text-[11px] text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+              className="rounded-md bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300 hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
             >
               킬스위치 해제
             </button>
