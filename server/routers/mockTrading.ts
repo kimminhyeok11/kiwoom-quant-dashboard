@@ -267,7 +267,13 @@ export const mockTradingRouter = router({
         await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq(autoTradePolicies.id, current.id));
       }
 
-      const version = (current?.version ?? 0) + 1;
+      // userId 스코핑으로 최대 version 조회 (unique constraint 충돌 방지)
+      const [latestForUser] = await db.select({ version: autoTradePolicies.version })
+        .from(autoTradePolicies)
+        .where(eq(autoTradePolicies.userId, admin.id))
+        .orderBy(desc(autoTradePolicies.version))
+        .limit(1);
+      const version = (latestForUser?.version ?? 0) + 1;
 
       // Create new policy
       const [policy] = await db.insert(autoTradePolicies).values({
@@ -585,7 +591,13 @@ export const mockTradingRouter = router({
       // Supersede current
       await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq(autoTradePolicies.id, current.id));
 
-      const version = current.version + 1;
+      // userId 스코핑으로 최대 version 조회 (unique constraint 충돌 방지)
+      const [latestForUser] = await db.select({ version: autoTradePolicies.version })
+        .from(autoTradePolicies)
+        .where(eq(autoTradePolicies.userId, current.userId))
+        .orderBy(desc(autoTradePolicies.version))
+        .limit(1);
+      const version = (latestForUser?.version ?? 0) + 1;
       const [newPolicy] = await db.insert(autoTradePolicies).values({
         userId: current.userId,
         version,
@@ -631,10 +643,13 @@ export const mockTradingRouter = router({
 
       const limit = input?.limit ?? 10;
 
-      // 정책 버전 이력 (최신 순)
+      // 정책 버전 이력 (최신 순, admin 유저 스코핑)
+      const { users } = await import("../../drizzle/schema");
+      const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
       const policies = await db
         .select()
         .from(autoTradePolicies)
+        .where(admin ? eq(autoTradePolicies.userId, admin.id) : undefined)
         .orderBy(desc(autoTradePolicies.version))
         .limit(limit);
 
@@ -671,7 +686,7 @@ export const mockTradingRouter = router({
       // 최근 30일 성과 요약 (간략)
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const recentFilled = await db
-        .select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity })
+        .select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity, symbol: orderIntents.symbol })
         .from(orderIntents)
         .where(and(
           eq(orderIntents.executionOrigin, "local_node"),
@@ -681,8 +696,28 @@ export const mockTradingRouter = router({
 
       const buys = recentFilled.filter(o => o.side === "buy");
       const sells = recentFilled.filter(o => o.side === "sell");
-      const buyTotal = buys.reduce((s, o) => s + o.price * o.quantity, 0);
-      const sellTotal = sells.reduce((s, o) => s + o.price * o.quantity, 0);
+
+      // 실현 손익: 매도 종목에 대해 (매도가 - 가중평균매수가) × 수량
+      let netPnl30d = 0;
+      if (sells.length > 0) {
+        const sellSymbols = Array.from(new Set(sells.map(o => o.symbol)));
+        const buysBySymbol = new Map<string, typeof buys>();
+        for (const b of buys) {
+          const list = buysBySymbol.get(b.symbol) ?? [];
+          list.push(b);
+          buysBySymbol.set(b.symbol, list);
+        }
+        for (const symbol of sellSymbols) {
+          const symbolBuys = buysBySymbol.get(symbol) ?? [];
+          const totalCost = symbolBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+          const totalQty = symbolBuys.reduce((s, b) => s + b.quantity, 0);
+          const avgBuy = totalQty > 0 ? totalCost / totalQty : 0;
+          const symbolSells = sells.filter(s => s.symbol === symbol);
+          for (const sell of symbolSells) {
+            netPnl30d += (sell.price - avgBuy) * sell.quantity;
+          }
+        }
+      }
 
       return {
         history,
@@ -690,7 +725,7 @@ export const mockTradingRouter = router({
           totalTrades30d: recentFilled.length,
           buyCount: buys.length,
           sellCount: sells.length,
-          netPnl30d: sellTotal - buyTotal,
+          netPnl30d: Math.round(netPnl30d),
           policyVersions: policies.length,
           currentVersion: policies[0]?.version ?? 0,
         },

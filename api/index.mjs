@@ -1751,9 +1751,11 @@ async function feedbackLoopHandler(_req, res) {
       const newTakeProfit = adjustments.find((a) => a.parameter === "takeProfitPercent")?.suggested ?? Number(policy.takeProfitPercent);
       const newMaxPositions = adjustments.find((a) => a.parameter === "maxConcurrentPositions")?.suggested ?? policy.maxConcurrentPositions;
       await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq37(autoTradePolicies.id, policy.id));
+      const [latestForUser] = await db.select({ version: autoTradePolicies.version }).from(autoTradePolicies).where(eq37(autoTradePolicies.userId, policy.userId)).orderBy(desc30(autoTradePolicies.version)).limit(1);
+      const nextVersion = (latestForUser?.version ?? 0) + 1;
       await db.insert(autoTradePolicies).values({
         userId: policy.userId,
-        version: policy.version + 1,
+        version: nextVersion,
         status: "active",
         totalCapital: policy.totalCapital,
         maxConcurrentPositions: newMaxPositions,
@@ -1767,7 +1769,7 @@ async function feedbackLoopHandler(_req, res) {
       });
       autoApplied = true;
       await sendTelegram(`\u2705 <b>\uC815\uCC45 \uC790\uB3D9 \uC5C5\uB370\uC774\uD2B8 \uC801\uC6A9</b>
-v${policy.version} \u2192 v${policy.version + 1}
+v${policy.version} \u2192 v${nextVersion}
 SL ${Number(policy.stopLossPercent)}%\u2192${newStopLoss}%, TP ${Number(policy.takeProfitPercent)}%\u2192${newTakeProfit}%, \uC885\uBAA9 ${policy.maxConcurrentPositions}\u2192${newMaxPositions}`);
     }
     return res.json({ ok: true, analysis, autoApplied });
@@ -8950,7 +8952,8 @@ var mockTradingRouter = router({
     if (current) {
       await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq32(autoTradePolicies.id, current.id));
     }
-    const version = (current?.version ?? 0) + 1;
+    const [latestForUser] = await db.select({ version: autoTradePolicies.version }).from(autoTradePolicies).where(eq32(autoTradePolicies.userId, admin.id)).orderBy(desc26(autoTradePolicies.version)).limit(1);
+    const version = (latestForUser?.version ?? 0) + 1;
     const [policy] = await db.insert(autoTradePolicies).values({
       userId: admin.id,
       version,
@@ -9202,7 +9205,8 @@ var mockTradingRouter = router({
     const [current] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.version)).limit(1);
     if (!current) throw new TRPCError18({ code: "NOT_FOUND", message: "\uC218\uC815\uD560 \uD65C\uC131 \uC815\uCC45\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uBA3C\uC800 \uC804\uB7B5\uC744 \uBC30\uD3EC\uD558\uC138\uC694." });
     await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq32(autoTradePolicies.id, current.id));
-    const version = current.version + 1;
+    const [latestForUser] = await db.select({ version: autoTradePolicies.version }).from(autoTradePolicies).where(eq32(autoTradePolicies.userId, current.userId)).orderBy(desc26(autoTradePolicies.version)).limit(1);
+    const version = (latestForUser?.version ?? 0) + 1;
     const [newPolicy] = await db.insert(autoTradePolicies).values({
       userId: current.userId,
       version,
@@ -9242,7 +9246,9 @@ var mockTradingRouter = router({
     const db = await getDb();
     if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
     const limit = input?.limit ?? 10;
-    const policies = await db.select().from(autoTradePolicies).orderBy(desc26(autoTradePolicies.version)).limit(limit);
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    const policies = await db.select().from(autoTradePolicies).where(admin ? eq32(autoTradePolicies.userId, admin.id) : void 0).orderBy(desc26(autoTradePolicies.version)).limit(limit);
     const history = policies.map((p, idx) => {
       const prev = policies[idx + 1];
       const changes = [];
@@ -9272,22 +9278,40 @@ var mockTradingRouter = router({
       };
     });
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
-    const recentFilled = await db.select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity }).from(orderIntents).where(and22(
+    const recentFilled = await db.select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity, symbol: orderIntents.symbol }).from(orderIntents).where(and22(
       eq32(orderIntents.executionOrigin, "local_node"),
       eq32(orderIntents.status, "filled"),
       gte3(orderIntents.createdAt, thirtyDaysAgo)
     ));
     const buys = recentFilled.filter((o) => o.side === "buy");
     const sells = recentFilled.filter((o) => o.side === "sell");
-    const buyTotal = buys.reduce((s, o) => s + o.price * o.quantity, 0);
-    const sellTotal = sells.reduce((s, o) => s + o.price * o.quantity, 0);
+    let netPnl30d = 0;
+    if (sells.length > 0) {
+      const sellSymbols = Array.from(new Set(sells.map((o) => o.symbol)));
+      const buysBySymbol = /* @__PURE__ */ new Map();
+      for (const b of buys) {
+        const list = buysBySymbol.get(b.symbol) ?? [];
+        list.push(b);
+        buysBySymbol.set(b.symbol, list);
+      }
+      for (const symbol of sellSymbols) {
+        const symbolBuys = buysBySymbol.get(symbol) ?? [];
+        const totalCost = symbolBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = symbolBuys.reduce((s, b) => s + b.quantity, 0);
+        const avgBuy = totalQty > 0 ? totalCost / totalQty : 0;
+        const symbolSells = sells.filter((s) => s.symbol === symbol);
+        for (const sell of symbolSells) {
+          netPnl30d += (sell.price - avgBuy) * sell.quantity;
+        }
+      }
+    }
     return {
       history,
       summary: {
         totalTrades30d: recentFilled.length,
         buyCount: buys.length,
         sellCount: sells.length,
-        netPnl30d: sellTotal - buyTotal,
+        netPnl30d: Math.round(netPnl30d),
         policyVersions: policies.length,
         currentVersion: policies[0]?.version ?? 0
       }

@@ -379,9 +379,17 @@ export async function feedbackLoopHandler(_req: Request, res: Response) {
 
       await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq(autoTradePolicies.id, policy.id));
 
+      // userId 스코핑으로 최대 version 조회 (unique constraint 충돌 방지)
+      const [latestForUser] = await db.select({ version: autoTradePolicies.version })
+        .from(autoTradePolicies)
+        .where(eq(autoTradePolicies.userId, policy.userId))
+        .orderBy(desc(autoTradePolicies.version))
+        .limit(1);
+      const nextVersion = (latestForUser?.version ?? 0) + 1;
+
       await db.insert(autoTradePolicies).values({
         userId: policy.userId,
-        version: policy.version + 1,
+        version: nextVersion,
         status: "active",
         totalCapital: policy.totalCapital,
         maxConcurrentPositions: newMaxPositions,
@@ -395,7 +403,7 @@ export async function feedbackLoopHandler(_req: Request, res: Response) {
       });
 
       autoApplied = true;
-      await sendTelegram(`✅ <b>정책 자동 업데이트 적용</b>\nv${policy.version} → v${policy.version + 1}\nSL ${Number(policy.stopLossPercent)}%→${newStopLoss}%, TP ${Number(policy.takeProfitPercent)}%→${newTakeProfit}%, 종목 ${policy.maxConcurrentPositions}→${newMaxPositions}`);
+      await sendTelegram(`✅ <b>정책 자동 업데이트 적용</b>\nv${policy.version} → v${nextVersion}\nSL ${Number(policy.stopLossPercent)}%→${newStopLoss}%, TP ${Number(policy.takeProfitPercent)}%→${newTakeProfit}%, 종목 ${policy.maxConcurrentPositions}→${newMaxPositions}`);
     }
 
     return res.json({ ok: true, analysis, autoApplied });
