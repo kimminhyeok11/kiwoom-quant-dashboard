@@ -11,7 +11,7 @@
  *   - 데이터 — 수집 상태 (설정 영역)
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { OneClickBacktest } from "./OneClickBacktest";
 import { ChartPage } from "./ChartPage";
@@ -149,6 +149,9 @@ export function MainDashboard() {
 
   const currentNav = NAV.find(n => n.section === section)!;
   const currentStep = FLOW_STEPS.find(f => f.section === section);
+
+  // 페이지 전환 시 스크롤 최상단으로 초기화
+  useEffect(() => { window.scrollTo(0, 0); }, [section, subPage]);
 
   function navigate(sec: Section, sub?: SubPage) {
     const target = sub ?? NAV.find(n => n.section === sec)!.subPages[0].id;

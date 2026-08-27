@@ -476,14 +476,18 @@ export const oneClickBacktestRouter = router({
   /**
    * 채택된 조건식 목록 조회
    */
-  adopted: protectedProcedure.query(async ({ ctx }) => {
+  adopted: publicProcedure.query(async () => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+    const { users } = await import("../../drizzle/schema");
+    const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+    if (!admin) return [];
 
     const presets = await db
       .select()
       .from(strategyPresets)
-      .where(eq(strategyPresets.userId, ctx.user.id))
+      .where(eq(strategyPresets.userId, admin.id))
       .orderBy(desc(strategyPresets.createdAt))
       .limit(50);
 

@@ -4599,6 +4599,24 @@ var networkRouter = router({
     if (!db) return [];
     const checks = await db.select({ terminalIp: kiwoomTerminalConnectionChecks.terminalIp, status: kiwoomTerminalConnectionChecks.status, errorCode: kiwoomTerminalConnectionChecks.errorCode, message: kiwoomTerminalConnectionChecks.message, verificationJson: kiwoomTerminalConnectionChecks.verificationJson, checkedAt: kiwoomTerminalConnectionChecks.checkedAt }).from(kiwoomTerminalConnectionChecks).where(eq12(kiwoomTerminalConnectionChecks.userId, ctx.user.id)).orderBy(desc8(kiwoomTerminalConnectionChecks.checkedAt)).limit(8);
     return checks.map(withTerminalDiagnosis);
+  }),
+  /**
+   * 수집기 동기화 로그 조회 (최근 N건)
+   */
+  collectorLogs: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const { localResearchNodeSyncEvents: localResearchNodeSyncEvents2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const logs = await db.select({
+      id: localResearchNodeSyncEvents2.id,
+      tradingDate: localResearchNodeSyncEvents2.tradingDate,
+      channel: localResearchNodeSyncEvents2.channel,
+      status: localResearchNodeSyncEvents2.status,
+      quoteCount: localResearchNodeSyncEvents2.quoteCount,
+      message: localResearchNodeSyncEvents2.message,
+      createdAt: localResearchNodeSyncEvents2.createdAt
+    }).from(localResearchNodeSyncEvents2).orderBy(desc8(localResearchNodeSyncEvents2.createdAt)).limit(20);
+    return logs;
   })
 });
 
@@ -8757,10 +8775,13 @@ var oneClickBacktestRouter = router({
   /**
    * 채택된 조건식 목록 조회
    */
-  adopted: protectedProcedure.query(async ({ ctx }) => {
+  adopted: publicProcedure.query(async () => {
     const db = await getDb();
     if (!db) throw new TRPCError17({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
-    const presets = await db.select().from(strategyPresets).where(eq31(strategyPresets.userId, ctx.user.id)).orderBy(desc25(strategyPresets.createdAt)).limit(50);
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq31(users2.role, "admin")).limit(1);
+    if (!admin) return [];
+    const presets = await db.select().from(strategyPresets).where(eq31(strategyPresets.userId, admin.id)).orderBy(desc25(strategyPresets.createdAt)).limit(50);
     return presets.map((p) => ({
       id: p.id,
       name: p.name,

@@ -125,4 +125,23 @@ export const networkRouter = router({
     const checks = await db.select({ terminalIp: kiwoomTerminalConnectionChecks.terminalIp, status: kiwoomTerminalConnectionChecks.status, errorCode: kiwoomTerminalConnectionChecks.errorCode, message: kiwoomTerminalConnectionChecks.message, verificationJson: kiwoomTerminalConnectionChecks.verificationJson, checkedAt: kiwoomTerminalConnectionChecks.checkedAt }).from(kiwoomTerminalConnectionChecks).where(eq(kiwoomTerminalConnectionChecks.userId, ctx.user.id)).orderBy(desc(kiwoomTerminalConnectionChecks.checkedAt)).limit(8);
     return checks.map(withTerminalDiagnosis);
   }),
+
+  /**
+   * 수집기 동기화 로그 조회 (최근 N건)
+   */
+  collectorLogs: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const { localResearchNodeSyncEvents } = await import("../../drizzle/schema");
+    const logs = await db.select({
+      id: localResearchNodeSyncEvents.id,
+      tradingDate: localResearchNodeSyncEvents.tradingDate,
+      channel: localResearchNodeSyncEvents.channel,
+      status: localResearchNodeSyncEvents.status,
+      quoteCount: localResearchNodeSyncEvents.quoteCount,
+      message: localResearchNodeSyncEvents.message,
+      createdAt: localResearchNodeSyncEvents.createdAt,
+    }).from(localResearchNodeSyncEvents).orderBy(desc(localResearchNodeSyncEvents.createdAt)).limit(20);
+    return logs;
+  }),
 });
