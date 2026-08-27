@@ -21,6 +21,7 @@ import { DataStatus } from "./DataStatus";
 import { DayTradingExperimentPanel } from "./DayTradingExperimentPanel";
 import { DayTradeBacktest } from "./DayTradeBacktest";
 import { StrategyCompare } from "./StrategyCompare";
+import { MyStrategies } from "./MyStrategies";
 import { PatternLearning } from "./PatternLearning";
 import { ConditionBuilderPage } from "../pages/ConditionBuilderPage";
 import { HomeSummary } from "./HomeSummary";
@@ -50,6 +51,7 @@ type SubPage =
   | "auto-generate"
   | "manual-builder"
   | "pattern-learn"
+  | "my-strategies"
   | "daily-backtest"
   | "intraday-backtest"
   | "strategy-compare"
@@ -87,6 +89,7 @@ const NAV: NavItem[] = [
       { id: "auto-generate", label: "자동 생성", icon: FlaskConical },
       { id: "manual-builder", label: "직접 작성", icon: SlidersHorizontal },
       { id: "pattern-learn", label: "패턴 분석", icon: Brain },
+      { id: "my-strategies", label: "내 조건식", icon: Lightbulb },
     ],
   },
   {
@@ -388,6 +391,7 @@ export function MainDashboard() {
         {section === "strategy" && subPage === "auto-generate" && <OneClickBacktest />}
         {section === "strategy" && subPage === "manual-builder" && <ConditionBuilderPage />}
         {section === "strategy" && subPage === "pattern-learn" && <PatternLearning />}
+        {section === "strategy" && subPage === "my-strategies" && <MyStrategies />}
 
         {/* Validate (성과 검증) */}
         {section === "validate" && subPage === "daily-backtest" && <OneClickBacktest />}
