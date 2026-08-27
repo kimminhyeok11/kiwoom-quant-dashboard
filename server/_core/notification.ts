@@ -83,11 +83,11 @@ export async function notifyTrade(input: {
   const message = [
     `${emoji} <b>모의 ${action} 체결</b>`,
     ``,
-    `종목: ${input.name} (${input.symbol})`,
+    `종목: ${escapeHtml(input.name)} (${escapeHtml(input.symbol)})`,
     `가격: ${input.price.toLocaleString()}원`,
     `수량: ${input.quantity}주`,
     `금액: ${(input.price * input.quantity).toLocaleString()}원`,
-    `사유: ${input.reason}`,
+    `사유: ${escapeHtml(input.reason)}`,
     `시각: ${new Date().toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" })}`,
   ].join("\n");
   return sendTelegram(message);

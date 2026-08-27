@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { autonomousResearchObservations, orderExecutions, orderIntents, tradingProfiles } from "../../drizzle/schema";
@@ -72,8 +72,12 @@ export const ordersRouter = router({
     const intent = (await db.select().from(orderIntents).where(and(eq(orderIntents.id, input.id), eq(orderIntents.userId, ctx.user.id))).limit(1))[0];
     const profile = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, ctx.user.id)).limit(1))[0];
     if (!intent || !profile) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "주문 의도 또는 실거래 안전 설정이 없습니다." });
-    const confirmedToday = (await db.select().from(orderIntents).where(eq(orderIntents.userId, ctx.user.id)))
-      .filter(order => ["confirmed", "submitted", "filled"].includes(order.status)).length;
+    // 오늘 KST 기준으로 확인된 주문만 카운트
+    const todayKST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const todayStartKST = new Date(todayKST + "T00:00:00+09:00");
+    const todayOrdersAll = await db.select({ status: orderIntents.status, createdAt: orderIntents.createdAt }).from(orderIntents)
+      .where(and(eq(orderIntents.userId, ctx.user.id), gte(orderIntents.createdAt, todayStartKST)));
+    const confirmedToday = todayOrdersAll.filter(order => ["confirmed", "submitted", "filled"].includes(order.status)).length;
     const client = new KiwoomClient();
     try {
       client.assertOrderMayBeSubmitted({
@@ -91,7 +95,7 @@ export const ordersRouter = router({
       eq(orderIntents.id, intent.id),
       eq(orderIntents.userId, ctx.user.id),
       eq(orderIntents.status, "confirmed"),
-    ));
+    )).returning({ id: orderIntents.id });
     if (claim.length !== 1) {
       throw new TRPCError({ code: "CONFLICT", message: "이 주문은 이미 전송 처리 중이거나 처리되었습니다." });
     }

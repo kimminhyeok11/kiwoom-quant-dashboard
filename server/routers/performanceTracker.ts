@@ -49,9 +49,8 @@ export const performanceTrackerRouter = router({
 
     const totalBuyAmount = buyOrders.reduce((s, o) => s + o.price * o.quantity, 0);
     const totalSellAmount = sellOrders.reduce((s, o) => s + o.price * o.quantity, 0);
-    const realizedPnl = totalSellAmount - totalBuyAmount;
 
-    // 종목별 매매 쌍 매칭 (간이)
+    // 종목별 매매 쌍 매칭
     const tradesBySymbol = new Map<string, { buys: typeof buyOrders; sells: typeof sellOrders }>();
     for (const order of allFilled) {
       const entry = tradesBySymbol.get(order.symbol) ?? { buys: [], sells: [] };
@@ -105,6 +104,9 @@ export const performanceTrackerRouter = router({
     const avgLoss = losses > 0
       ? roundTrips.filter(t => t.returnPercent <= 0).reduce((s, t) => s + t.returnPercent, 0) / losses
       : 0;
+
+    // 실현 손익: 라운드트립 기반 (매도가 - 매수가) × 수량
+    const realizedPnl = roundTrips.reduce((s, t) => s + (t.sellPrice - t.buyPrice) * t.quantity, 0);
 
     return {
       totalOrders: allFilled.length,
@@ -172,15 +174,30 @@ export const performanceTrackerRouter = router({
       let winCount = 0;
       let totalReturn = 0;
 
-      const symbolBuys = new Map<string, number>();
-      for (const b of buys) symbolBuys.set(b.symbol, b.price);
+      const symbolBuys = new Map<string, { totalCost: number; totalQty: number }>();
+      for (const b of buys) {
+        const entry = symbolBuys.get(b.symbol) ?? { totalCost: 0, totalQty: 0 };
+        entry.totalCost += b.price * b.quantity;
+        entry.totalQty += b.quantity;
+        symbolBuys.set(b.symbol, entry);
+      }
 
       for (const s of sells) {
-        const buyPrice = symbolBuys.get(s.symbol);
-        if (buyPrice && buyPrice > 0) {
-          const ret = (s.price - buyPrice) / buyPrice;
+        const buyData = symbolBuys.get(s.symbol);
+        if (buyData && buyData.totalQty > 0) {
+          const avgBuyPrice = buyData.totalCost / buyData.totalQty;
+          const ret = (s.price - avgBuyPrice) / avgBuyPrice;
           totalReturn += ret;
           if (ret > 0) winCount++;
+        }
+      }
+
+      // 실현 손익: 매도 종목별 (매도가 - 가중평균매수가) × 수량
+      let totalPnl = 0;
+      for (const s of sells) {
+        const buyData = symbolBuys.get(s.symbol);
+        if (buyData && buyData.totalQty > 0) {
+          totalPnl += (s.price - buyData.totalCost / buyData.totalQty) * s.quantity;
         }
       }
 
@@ -198,7 +215,7 @@ export const performanceTrackerRouter = router({
           tradeCount,
           winRate: tradeCount > 0 ? Number(((winCount / tradeCount) * 100).toFixed(1)) : null,
           avgReturn: tradeCount > 0 ? Number(((totalReturn / tradeCount) * 100).toFixed(2)) : 0,
-          totalPnl: sellTotal - buyTotal,
+          totalPnl: Math.round(totalPnl),
         },
       });
     }

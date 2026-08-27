@@ -42,7 +42,27 @@ export async function dailyReportHandler(_req: Request, res: Response) {
     const sells = todayOrders.filter(o => o.side === "sell");
     const buyTotal = buys.reduce((s, o) => s + o.price * o.quantity, 0);
     const sellTotal = sells.reduce((s, o) => s + o.price * o.quantity, 0);
-    const realizedPnl = sellTotal - buyTotal;
+
+    // 실현 손익: 매도 종목의 (매도가 - 가중평균매수가) × 수량
+    let realizedPnl = 0;
+    if (sells.length > 0) {
+      const sellSymbols = Array.from(new Set(sells.map(o => o.symbol)));
+      const buyHistory = await db
+        .select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity })
+        .from(orderIntents)
+        .where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled"), eq(orderIntents.side, "buy")));
+      const avgBuyBySymbol = new Map<string, number>();
+      for (const sym of sellSymbols) {
+        const symBuys = buyHistory.filter(b => b.symbol === sym);
+        const totalCost = symBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = symBuys.reduce((s, b) => s + b.quantity, 0);
+        if (totalQty > 0) avgBuyBySymbol.set(sym, totalCost / totalQty);
+      }
+      for (const sell of sells) {
+        const avgBuy = avgBuyBySymbol.get(sell.symbol) ?? sell.price;
+        realizedPnl += (sell.price - avgBuy) * sell.quantity;
+      }
+    }
 
     // ─── 포지션 현황 ────────────────────────────────────────────
 
@@ -110,13 +130,27 @@ export async function dailyReportHandler(_req: Request, res: Response) {
     const report = lines.join("\n");
     await sendTelegram(report);
 
-    // 표준 notifyDailyReport도 호출 (간결 버전)
-    const wins = sells.length; // 간이 승수 (매도 건수를 근사 승수로)
+    // 실제 승수: 매도 종목 중 수익 실현한 건수
+    let actualWins = 0;
+    if (sells.length > 0) {
+      const sellSymbols = Array.from(new Set(sells.map(o => o.symbol)));
+      const buyHistoryForWins = await db
+        .select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity })
+        .from(orderIntents)
+        .where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled"), eq(orderIntents.side, "buy")));
+      for (const sell of sells) {
+        const symBuys = buyHistoryForWins.filter(b => b.symbol === sell.symbol);
+        const totalCost = symBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = symBuys.reduce((s, b) => s + b.quantity, 0);
+        const avgBuy = totalQty > 0 ? totalCost / totalQty : sell.price;
+        if (sell.price > avgBuy) actualWins++;
+      }
+    }
     const topTrade = todayOrders.length ? { symbol: todayOrders[0].symbol, name: todayOrders[0].name, returnPct: 0 } : null;
     await notifyDailyReport({
       date: today,
       totalTrades: todayOrders.length,
-      wins,
+      wins: actualWins,
       netReturnPct: policy ? (realizedPnl / policy.totalCapital * 100) : 0,
       topTrade,
       worstTrade: null,

@@ -1522,7 +1522,7 @@ var feedbackLoop_exports = {};
 __export(feedbackLoop_exports, {
   feedbackLoopHandler: () => feedbackLoopHandler
 });
-import { and as and27, desc as desc30, eq as eq37, gte as gte5 } from "drizzle-orm";
+import { and as and27, desc as desc30, eq as eq37, gte as gte6 } from "drizzle-orm";
 function buildRoundTrips(trades) {
   const bySymbol = /* @__PURE__ */ new Map();
   for (const t2 of trades) {
@@ -1621,7 +1621,7 @@ async function feedbackLoopHandler(_req, res) {
     }).from(orderIntents).where(and27(
       eq37(orderIntents.executionOrigin, "local_node"),
       eq37(orderIntents.status, "filled"),
-      gte5(orderIntents.createdAt, thirtyDaysAgo)
+      gte6(orderIntents.createdAt, thirtyDaysAgo)
     )).orderBy(orderIntents.createdAt);
     const trades = filledOrders.map((o) => ({
       symbol: o.symbol,
@@ -1656,7 +1656,7 @@ async function feedbackLoopHandler(_req, res) {
     }).from(orderIntents).innerJoin(orderExecutions, eq37(orderExecutions.orderIntentId, orderIntents.id)).where(and27(
       eq37(orderIntents.executionOrigin, "local_node"),
       eq37(orderExecutions.executionStatus, "filled"),
-      gte5(orderIntents.createdAt, thirtyDaysAgo)
+      gte6(orderIntents.createdAt, thirtyDaysAgo)
     )).limit(200);
     const slippages = executions.filter((e) => e.plannedPrice > 0 && e.filledPrice && e.filledPrice > 0).map((e) => {
       const slipPct = (e.filledPrice - e.plannedPrice) / e.plannedPrice * 100;
@@ -3776,7 +3776,7 @@ var tradingProfileRouter = router({
 init_schema();
 init_db();
 import { TRPCError as TRPCError6 } from "@trpc/server";
-import { and as and4, desc as desc4, eq as eq6 } from "drizzle-orm";
+import { and as and4, desc as desc4, eq as eq6, gte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z as z5 } from "zod";
 async function requireDb3() {
@@ -3837,7 +3837,10 @@ var ordersRouter = router({
     const intent = (await db.select().from(orderIntents).where(and4(eq6(orderIntents.id, input.id), eq6(orderIntents.userId, ctx.user.id))).limit(1))[0];
     const profile = (await db.select().from(tradingProfiles).where(eq6(tradingProfiles.userId, ctx.user.id)).limit(1))[0];
     if (!intent || !profile) throw new TRPCError6({ code: "PRECONDITION_FAILED", message: "\uC8FC\uBB38 \uC758\uB3C4 \uB610\uB294 \uC2E4\uAC70\uB798 \uC548\uC804 \uC124\uC815\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
-    const confirmedToday = (await db.select().from(orderIntents).where(eq6(orderIntents.userId, ctx.user.id))).filter((order) => ["confirmed", "submitted", "filled"].includes(order.status)).length;
+    const todayKST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
+    const todayStartKST = /* @__PURE__ */ new Date(todayKST + "T00:00:00+09:00");
+    const todayOrdersAll = await db.select({ status: orderIntents.status, createdAt: orderIntents.createdAt }).from(orderIntents).where(and4(eq6(orderIntents.userId, ctx.user.id), gte(orderIntents.createdAt, todayStartKST)));
+    const confirmedToday = todayOrdersAll.filter((order) => ["confirmed", "submitted", "filled"].includes(order.status)).length;
     const client = new KiwoomClient();
     try {
       client.assertOrderMayBeSubmitted({
@@ -3856,7 +3859,7 @@ var ordersRouter = router({
       eq6(orderIntents.id, intent.id),
       eq6(orderIntents.userId, ctx.user.id),
       eq6(orderIntents.status, "confirmed")
-    ));
+    )).returning({ id: orderIntents.id });
     if (claim.length !== 1) {
       throw new TRPCError6({ code: "CONFLICT", message: "\uC774 \uC8FC\uBB38\uC740 \uC774\uBBF8 \uC804\uC1A1 \uCC98\uB9AC \uC911\uC774\uAC70\uB098 \uCC98\uB9AC\uB418\uC5C8\uC2B5\uB2C8\uB2E4." });
     }
@@ -8243,7 +8246,7 @@ var survivalResearchRouter = router({
 
 // server/routers/chartData.ts
 import { z as z18 } from "zod";
-import { asc as asc6, and as and20, eq as eq30, desc as desc24, gte, lte, inArray as inArray7, sql as sql6 } from "drizzle-orm";
+import { asc as asc6, and as and20, eq as eq30, desc as desc24, gte as gte2, lte, inArray as inArray7, sql as sql6 } from "drizzle-orm";
 init_db();
 init_schema();
 import { TRPCError as TRPCError16 } from "@trpc/server";
@@ -8322,7 +8325,7 @@ var chartDataRouter = router({
       eq30(localResearchDailyBars.symbol, input.symbol),
       sql6`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`
     ];
-    if (input.startDate) conditions.push(gte(localResearchDailyBars.date, input.startDate));
+    if (input.startDate) conditions.push(gte2(localResearchDailyBars.date, input.startDate));
     if (input.endDate) conditions.push(lte(localResearchDailyBars.date, input.endDate));
     const rows = await db.select({
       date: localResearchDailyBars.date,
@@ -8760,7 +8763,7 @@ function extractRulesFromRoot(root) {
 
 // server/routers/mockTrading.ts
 import { z as z20 } from "zod";
-import { and as and22, desc as desc26, eq as eq32, gte as gte3, inArray as inArray9 } from "drizzle-orm";
+import { and as and22, desc as desc26, eq as eq32, gte as gte4, inArray as inArray9 } from "drizzle-orm";
 import { TRPCError as TRPCError18 } from "@trpc/server";
 init_db();
 init_schema();
@@ -8877,7 +8880,7 @@ var mockTradingRouter = router({
     }).from(orderIntents).where(and22(
       eq32(orderIntents.executionOrigin, "local_node"),
       eq32(orderIntents.status, "filled"),
-      gte3(orderIntents.createdAt, todayStart)
+      gte4(orderIntents.createdAt, todayStart)
     ));
     const buyOrders = todayOrders.filter((o) => o.side === "buy");
     const sellOrders = todayOrders.filter((o) => o.side === "sell");
@@ -9015,7 +9018,7 @@ var mockTradingRouter = router({
     if (!policy) return { active: false, killSwitch: false, safetyTriggered: false, limits: null, todayStats: null };
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const todayStart = /* @__PURE__ */ new Date(today + "T00:00:00+09:00");
-    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status, symbol: orderIntents.symbol }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte3(orderIntents.createdAt, todayStart)));
+    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status, symbol: orderIntents.symbol }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte4(orderIntents.createdAt, todayStart)));
     const todaySells = todayOrders.filter((o) => o.side === "sell");
     let realizedPnl = 0;
     if (todaySells.length > 0) {
@@ -9281,7 +9284,7 @@ var mockTradingRouter = router({
     const recentFilled = await db.select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity, symbol: orderIntents.symbol }).from(orderIntents).where(and22(
       eq32(orderIntents.executionOrigin, "local_node"),
       eq32(orderIntents.status, "filled"),
-      gte3(orderIntents.createdAt, thirtyDaysAgo)
+      gte4(orderIntents.createdAt, thirtyDaysAgo)
     ));
     const buys = recentFilled.filter((o) => o.side === "buy");
     const sells = recentFilled.filter((o) => o.side === "sell");
@@ -10834,7 +10837,6 @@ var performanceTrackerRouter = router({
     const sellOrders = allFilled.filter((o) => o.side === "sell");
     const totalBuyAmount = buyOrders.reduce((s, o) => s + o.price * o.quantity, 0);
     const totalSellAmount = sellOrders.reduce((s, o) => s + o.price * o.quantity, 0);
-    const realizedPnl = totalSellAmount - totalBuyAmount;
     const tradesBySymbol = /* @__PURE__ */ new Map();
     for (const order of allFilled) {
       const entry = tradesBySymbol.get(order.symbol) ?? { buys: [], sells: [] };
@@ -10868,6 +10870,7 @@ var performanceTrackerRouter = router({
     const avgReturn = roundTrips.length ? roundTrips.reduce((s, t2) => s + t2.returnPercent, 0) / roundTrips.length : 0;
     const avgWin = wins > 0 ? roundTrips.filter((t2) => t2.returnPercent > 0).reduce((s, t2) => s + t2.returnPercent, 0) / wins : 0;
     const avgLoss = losses > 0 ? roundTrips.filter((t2) => t2.returnPercent <= 0).reduce((s, t2) => s + t2.returnPercent, 0) / losses : 0;
+    const realizedPnl = roundTrips.reduce((s, t2) => s + (t2.sellPrice - t2.buyPrice) * t2.quantity, 0);
     return {
       totalOrders: allFilled.length,
       buyCount: buyOrders.length,
@@ -10913,13 +10916,26 @@ var performanceTrackerRouter = router({
       let winCount = 0;
       let totalReturn = 0;
       const symbolBuys = /* @__PURE__ */ new Map();
-      for (const b of buys) symbolBuys.set(b.symbol, b.price);
+      for (const b of buys) {
+        const entry = symbolBuys.get(b.symbol) ?? { totalCost: 0, totalQty: 0 };
+        entry.totalCost += b.price * b.quantity;
+        entry.totalQty += b.quantity;
+        symbolBuys.set(b.symbol, entry);
+      }
       for (const s of sells) {
-        const buyPrice = symbolBuys.get(s.symbol);
-        if (buyPrice && buyPrice > 0) {
-          const ret = (s.price - buyPrice) / buyPrice;
+        const buyData = symbolBuys.get(s.symbol);
+        if (buyData && buyData.totalQty > 0) {
+          const avgBuyPrice = buyData.totalCost / buyData.totalQty;
+          const ret = (s.price - avgBuyPrice) / avgBuyPrice;
           totalReturn += ret;
           if (ret > 0) winCount++;
+        }
+      }
+      let totalPnl = 0;
+      for (const s of sells) {
+        const buyData = symbolBuys.get(s.symbol);
+        if (buyData && buyData.totalQty > 0) {
+          totalPnl += (s.price - buyData.totalCost / buyData.totalQty) * s.quantity;
         }
       }
       comparisons.push({
@@ -10936,7 +10952,7 @@ var performanceTrackerRouter = router({
           tradeCount,
           winRate: tradeCount > 0 ? Number((winCount / tradeCount * 100).toFixed(1)) : null,
           avgReturn: tradeCount > 0 ? Number((totalReturn / tradeCount * 100).toFixed(2)) : 0,
-          totalPnl: sellTotal - buyTotal
+          totalPnl: Math.round(totalPnl)
         }
       });
     }
