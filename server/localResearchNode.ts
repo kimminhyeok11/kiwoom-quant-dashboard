@@ -1079,9 +1079,19 @@ export function registerLocalResearchNodeRoutes(app: Express) {
 
     const tradingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
     const [policy] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.status, "active")).orderBy(desc(autoTradePolicies.updatedAt)).limit(1);
-    if (!policy) return response.status(409).json({ status: "waiting_for_policy", message: "활성 자동 실투 정책이 아직 없습니다." });
+    if (!policy) {
+      // 정책 없어도 매도 대기열은 반환
+      const pendingSells = await db.select({ id: orderIntents.id, symbol: orderIntents.symbol, name: orderIntents.name, quantity: orderIntents.quantity, price: orderIntents.price, dedupeKey: orderIntents.dedupeKey })
+        .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.side, "sell"), eq(orderIntents.status, "pending_confirmation"))).limit(20);
+      return response.json({ status: "waiting_for_policy", sellOrders: pendingSells, orders: [] });
+    }
     const profile = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, policy.userId)).limit(1))[0];
-    if (!profile || profile.killSwitch || !profile.autoTradeEnabled) return response.status(409).json({ status: "automatic_execution_paused", message: "자동매매 활성화와 킬 스위치 해제가 필요합니다." });
+    if (!profile || profile.killSwitch || !profile.autoTradeEnabled) {
+      // 자동매매 비활성이어도 매도 대기열은 반환
+      const pendingSells = await db.select({ id: orderIntents.id, symbol: orderIntents.symbol, name: orderIntents.name, quantity: orderIntents.quantity, price: orderIntents.price, dedupeKey: orderIntents.dedupeKey })
+        .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.side, "sell"), eq(orderIntents.status, "pending_confirmation"))).limit(20);
+      return response.json({ status: "automatic_execution_paused", sellOrders: pendingSells, orders: [] });
+    }
 
     // 실험이 없어도 정책은 반환 (수집기가 독립적으로 매매 가능)
     const experiment = await ensureLocalIntradayExperiment(db, tradingDate);

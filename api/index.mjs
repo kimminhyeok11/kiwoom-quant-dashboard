@@ -13271,9 +13271,15 @@ function registerLocalResearchNodeRoutes(app2) {
     if (!db) return response.status(503).json({ status: "unavailable", message: "\uC5F0\uAD6C \uB370\uC774\uD130\uBCA0\uC774\uC2A4\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const tradingDate2 = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const [policy] = await db.select().from(autoTradePolicies).where(eq41(autoTradePolicies.status, "active")).orderBy(desc34(autoTradePolicies.updatedAt)).limit(1);
-    if (!policy) return response.status(409).json({ status: "waiting_for_policy", message: "\uD65C\uC131 \uC790\uB3D9 \uC2E4\uD22C \uC815\uCC45\uC774 \uC544\uC9C1 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    if (!policy) {
+      const pendingSells = await db.select({ id: orderIntents.id, symbol: orderIntents.symbol, name: orderIntents.name, quantity: orderIntents.quantity, price: orderIntents.price, dedupeKey: orderIntents.dedupeKey }).from(orderIntents).where(and30(eq41(orderIntents.executionOrigin, "local_node"), eq41(orderIntents.side, "sell"), eq41(orderIntents.status, "pending_confirmation"))).limit(20);
+      return response.json({ status: "waiting_for_policy", sellOrders: pendingSells, orders: [] });
+    }
     const profile = (await db.select().from(tradingProfiles).where(eq41(tradingProfiles.userId, policy.userId)).limit(1))[0];
-    if (!profile || profile.killSwitch || !profile.autoTradeEnabled) return response.status(409).json({ status: "automatic_execution_paused", message: "\uC790\uB3D9\uB9E4\uB9E4 \uD65C\uC131\uD654\uC640 \uD0AC \uC2A4\uC704\uCE58 \uD574\uC81C\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4." });
+    if (!profile || profile.killSwitch || !profile.autoTradeEnabled) {
+      const pendingSells = await db.select({ id: orderIntents.id, symbol: orderIntents.symbol, name: orderIntents.name, quantity: orderIntents.quantity, price: orderIntents.price, dedupeKey: orderIntents.dedupeKey }).from(orderIntents).where(and30(eq41(orderIntents.executionOrigin, "local_node"), eq41(orderIntents.side, "sell"), eq41(orderIntents.status, "pending_confirmation"))).limit(20);
+      return response.json({ status: "automatic_execution_paused", sellOrders: pendingSells, orders: [] });
+    }
     const experiment = await ensureLocalIntradayExperiment(db, tradingDate2);
     const positions = experiment ? await db.select().from(dayTradeExperimentPositions).where(eq41(dayTradeExperimentPositions.experimentId, experiment.id)) : [];
     const isExperimentActive = experiment?.status === "tracking";
