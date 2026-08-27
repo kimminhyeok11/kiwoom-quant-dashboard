@@ -258,6 +258,13 @@ export const oneClickBacktestRouter = router({
         timestamp: new Date().toISOString(),
         config: { count, minRules, maxRules, holdingDays, feeRate, minScore, stopLossPercent, takeProfitPercent },
         symbols: finalSymbols,
+        reproducibility: {
+          seed,
+          engineVersion: "1.0",
+          datasetSymbols: finalSymbols,
+          datasetBarCounts: Object.fromEntries(finalSymbols.map(s => [s, convertedBarsBySymbol[s].length])),
+          timeframe,
+        },
         results: results.map((r, rank) => ({
           rank: rank + 1,
           fingerprint: r.genome.fingerprint,
@@ -268,6 +275,13 @@ export const oneClickBacktestRouter = router({
           totalTrades: r.totalTrades,
           worstDrawdown: Number(r.worstDrawdown.toFixed(2)),
           fitnessScore: Number(r.fitnessScore.toFixed(3)),
+          robustnessScore: Number((
+            (r.averageWinRate >= 50 ? 20 : r.averageWinRate * 0.4) +
+            (r.totalTrades >= 10 ? 15 : r.totalTrades * 1.5) +
+            (Math.abs(r.worstDrawdown) <= 10 ? 20 : Math.max(0, 20 - Math.abs(r.worstDrawdown))) +
+            (r.averageReturn > 0 ? Math.min(25, r.averageReturn * 2) : 0) +
+            (r.fitnessScore > 0 ? Math.min(20, r.fitnessScore * 2) : 0)
+          ).toFixed(1)),
           symbolResults: r.symbolResults.map(sr => ({
             symbol: sr.symbol,
             totalReturn: Number(sr.result.totalReturn.toFixed(2)),
@@ -586,6 +600,173 @@ export const oneClickBacktestRouter = router({
           drawdowns: iterationResults.map(r => r.maxDrawdown),
         },
       };
+    }),
+
+  /**
+   * 데이터 품질 검사 — OHLC 논리 오류, 누락, 비정상 데이터 탐지
+   */
+  dataQuality: publicProcedure
+    .input(z.object({ symbol: z.string().regex(/^\d{6}$/) }).optional())
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const conditions = [eq(localResearchDailyBars.adjustmentBasis, "adjusted")];
+      if (input?.symbol) conditions.push(eq(localResearchDailyBars.symbol, input.symbol));
+
+      const rows = await db.select({
+        symbol: localResearchDailyBars.symbol,
+        date: localResearchDailyBars.date,
+        open: localResearchDailyBars.open,
+        high: localResearchDailyBars.high,
+        low: localResearchDailyBars.low,
+        close: localResearchDailyBars.close,
+        volume: localResearchDailyBars.volume,
+      }).from(localResearchDailyBars).where(and(...conditions)).orderBy(asc(localResearchDailyBars.date)).limit(5000);
+
+      const issues: Array<{ symbol: string; date: string; type: string; detail: string }> = [];
+      let totalBars = rows.length;
+      let checkedSymbols = 0;
+
+      const bySymbol = new Map<string, typeof rows>();
+      for (const r of rows) { const list = bySymbol.get(r.symbol) ?? []; list.push(r); bySymbol.set(r.symbol, list); }
+
+      for (const [symbol, bars] of Array.from(bySymbol.entries())) {
+        checkedSymbols++;
+        for (let i = 0; i < bars.length; i++) {
+          const b = bars[i];
+          // OHLC 논리 검사
+          if (b.high < b.low) issues.push({ symbol, date: b.date, type: "OHLC_LOGIC", detail: `고가(${b.high}) < 저가(${b.low})` });
+          if (b.close > b.high || b.close < b.low) issues.push({ symbol, date: b.date, type: "CLOSE_RANGE", detail: `종가(${b.close})가 고저 범위 밖` });
+          if (b.open > b.high || b.open < b.low) issues.push({ symbol, date: b.date, type: "OPEN_RANGE", detail: `시가(${b.open})가 고저 범위 밖` });
+          if (b.open <= 0 || b.close <= 0) issues.push({ symbol, date: b.date, type: "ZERO_PRICE", detail: `가격 0 이하` });
+          if (Number(b.volume) < 0) issues.push({ symbol, date: b.date, type: "NEGATIVE_VOLUME", detail: `거래량 음수` });
+          // 비정상 가격 변동 (전일 대비 ±50%)
+          if (i > 0) {
+            const prevClose = bars[i - 1].close;
+            if (prevClose > 0) {
+              const change = Math.abs((b.open - prevClose) / prevClose);
+              if (change > 0.5) issues.push({ symbol, date: b.date, type: "EXTREME_GAP", detail: `전일 대비 ${(change * 100).toFixed(1)}% 갭` });
+            }
+          }
+        }
+      }
+
+      return {
+        totalBars,
+        checkedSymbols,
+        issueCount: issues.length,
+        status: issues.length === 0 ? "clean" : issues.length < 5 ? "warning" : "critical",
+        issues: issues.slice(0, 50),
+      };
+    }),
+
+  /**
+   * Monte Carlo 시뮬레이션 — 거래 순서 재배열로 MDD/파산 확률 분석
+   */
+  monteCarloValidation: publicProcedure
+    .input(z.object({
+      root: z.unknown(),
+      minimumScore: z.number().int().min(0).max(200),
+      simulations: z.number().int().min(100).max(2000).default(500),
+      holdingDays: z.number().int().min(1).max(60).default(5),
+      stopLossPercent: z.number().min(0).max(20).default(3),
+      takeProfitPercent: z.number().min(0).max(50).default(5),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const feeRate = 0.0003 + 8 / 10000;
+
+      // 먼저 원본 백테스트로 거래 목록 확보
+      const allSymbols = await db.selectDistinct({ symbol: localResearchDailyBars.symbol })
+        .from(localResearchDailyBars).where(eq(localResearchDailyBars.adjustmentBasis, "adjusted")).limit(20);
+
+      const allTrades: Array<{ returnPercent: number }> = [];
+      for (const { symbol } of allSymbols.slice(0, 5)) {
+        const rows = await db.select({ date: localResearchDailyBars.date, open: localResearchDailyBars.open, high: localResearchDailyBars.high, low: localResearchDailyBars.low, close: localResearchDailyBars.close, volume: localResearchDailyBars.volume, turnover: localResearchDailyBars.turnover })
+          .from(localResearchDailyBars).where(and(eq(localResearchDailyBars.symbol, symbol), eq(localResearchDailyBars.adjustmentBasis, "adjusted")))
+          .orderBy(asc(localResearchDailyBars.date)).limit(600);
+        if (rows.length < 60) continue;
+        const bars: DailyBar[] = rows.map(r => ({ date: r.date, open: r.open, high: r.high, low: r.low, close: r.close, volume: Number(r.volume), turnover: Number(r.turnover) }));
+        const result = runDailyBacktest({ bars, expression: input.root as ConditionExpressionGroup, minScore: input.minimumScore, holdingDays: input.holdingDays, feeRate, entryDelayDays: 1, entryTiming: "open", maxOpenGapPercent: 3, stopLossPercent: input.stopLossPercent, takeProfitPercent: input.takeProfitPercent });
+        for (const t of result.trades) allTrades.push({ returnPercent: t.returnPercent });
+      }
+
+      if (allTrades.length < 5) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Monte Carlo에 필요한 거래가 부족합니다 (${allTrades.length}건). 최소 5건 이상 필요.` });
+
+      // Monte Carlo: 거래 순서를 셔플하여 N회 시뮬레이션
+      const simResults: Array<{ finalEquity: number; maxDrawdown: number }> = [];
+
+      for (let sim = 0; sim < input.simulations; sim++) {
+        // Fisher-Yates shuffle
+        const shuffled = [...allTrades];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+
+        let equity = 100;
+        let peak = 100;
+        let maxDD = 0;
+        for (const t of shuffled) {
+          equity *= (1 + t.returnPercent / 100);
+          peak = Math.max(peak, equity);
+          const dd = (equity - peak) / peak * 100;
+          maxDD = Math.min(maxDD, dd);
+        }
+        simResults.push({ finalEquity: equity, maxDrawdown: maxDD });
+      }
+
+      const equities = simResults.map(r => r.finalEquity);
+      const drawdowns = simResults.map(r => r.maxDrawdown);
+      const sorted = [...equities].sort((a, b) => a - b);
+
+      const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+      const bankruptRate = equities.filter(e => e < 50).length / equities.length * 100; // 50% 이상 손실 = 파산
+
+      return {
+        originalTrades: allTrades.length,
+        simulations: input.simulations,
+        statistics: {
+          meanFinalEquity: Number(mean(equities).toFixed(2)),
+          medianFinalEquity: Number(sorted[Math.floor(sorted.length / 2)].toFixed(2)),
+          percentile5: Number(sorted[Math.floor(sorted.length * 0.05)].toFixed(2)),
+          percentile95: Number(sorted[Math.floor(sorted.length * 0.95)].toFixed(2)),
+          bankruptRate: Number(bankruptRate.toFixed(1)),
+          meanMaxDrawdown: Number(mean(drawdowns).toFixed(2)),
+          worstMaxDrawdown: Number(Math.min(...drawdowns).toFixed(2)),
+        },
+        distribution: {
+          equities: equities.slice(0, 100).map(e => Number(e.toFixed(1))), // 차트용 100개 샘플
+          drawdowns: drawdowns.slice(0, 100).map(d => Number(d.toFixed(1))),
+        },
+      };
+    }),
+
+  /**
+   * 전략 상태 변경 (CANDIDATE → TESTING → SURVIVOR → REJECTED → RETIRED)
+   */
+  updateStrategyStatus: protectedProcedure
+    .input(z.object({
+      presetId: z.number().int().positive(),
+      status: z.enum(["candidate", "testing", "survivor", "rejected", "retired"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [preset] = await db.select().from(strategyPresets).where(and(eq(strategyPresets.id, input.presetId), eq(strategyPresets.userId, ctx.user.id))).limit(1);
+      if (!preset) throw new TRPCError({ code: "NOT_FOUND", message: "전략을 찾을 수 없습니다." });
+
+      // scoringJson에 lifecycle status 저장
+      const currentScoring = (preset.scoringJson ?? {}) as Record<string, unknown>;
+      const updatedScoring = { ...currentScoring, lifecycleStatus: input.status, lifecycleUpdatedAt: new Date().toISOString() };
+      await db.update(strategyPresets).set({ scoringJson: updatedScoring }).where(eq(strategyPresets.id, input.presetId));
+
+      const labels: Record<string, string> = { candidate: "후보", testing: "검증 중", survivor: "생존", rejected: "탈락", retired: "은퇴" };
+      return { id: input.presetId, status: input.status, message: `전략이 "${labels[input.status]}" 상태로 변경되었습니다.` };
     }),
 });
 
