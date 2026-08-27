@@ -11,8 +11,9 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, ShieldCheck, TrendingUp, Wallet } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, ShieldCheck, TrendingUp, Wallet, X } from "lucide-react";
 import { LiveTradingMonitor } from "./LiveTradingMonitor";
+import { toast } from "sonner";
 
 export function MockTradingDashboard() {
   const [, setLocation] = useLocation();
@@ -20,10 +21,25 @@ export function MockTradingDashboard() {
   const recentOrders = trpc.mockTrading.recentOrders.useQuery(undefined, { refetchInterval: 30000 });
   const policy = trpc.mockTrading.activePolicy.useQuery(undefined, { staleTime: 60000 });
   const todayPnl = trpc.mockTrading.todayPnl.useQuery(undefined, { refetchInterval: 30000 });
+  const pendingSells = trpc.mockTrading.pendingSellOrders.useQuery(undefined, { refetchInterval: 10000 });
+
+  const sellMutation = trpc.mockTrading.sellOrder.useMutation({
+    onSuccess: (data) => { toast.success(data.message); positions.refetch(); pendingSells.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const liquidateMutation = trpc.mockTrading.liquidateAll.useMutation({
+    onSuccess: (data) => { toast.success(data.message); positions.refetch(); pendingSells.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const cancelSellMutation = trpc.mockTrading.cancelSellOrder.useMutation({
+    onSuccess: (data) => { toast.success(data.message); pendingSells.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
 
   const summary = positions.data?.summary;
   const positionList = positions.data?.positions ?? [];
   const orders = recentOrders.data?.orders ?? [];
+  const pendingSellList = pendingSells.data?.orders ?? [];
 
   return (
     <div className="flex flex-col gap-5 p-4">
@@ -122,7 +138,18 @@ export function MockTradingDashboard() {
 
       {/* Positions */}
       <section>
-        <h2 className="mb-3 text-sm font-bold text-white">보유 포지션 ({positionList.length}개)</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">보유 포지션 ({positionList.length}개)</h2>
+          {positionList.length > 0 && (
+            <button
+              onClick={() => { if (window.confirm(`보유 ${positionList.length}종목 전체를 매도 대기열에 추가합니다. 계속하시겠습니까?`)) liquidateMutation.mutate(); }}
+              disabled={liquidateMutation.isPending}
+              className="flex items-center gap-1 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[11px] font-medium text-rose-300 transition hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
+            >
+              {liquidateMutation.isPending ? "처리 중..." : "전체 청산"}
+            </button>
+          )}
+        </div>
         {positionList.length === 0 ? (
           <div className="rounded-xl border border-slate-800 bg-slate-950/30 px-6 py-10 text-center">
             <Wallet className="mx-auto mb-2 text-slate-600" size={24} />
@@ -141,6 +168,7 @@ export function MockTradingDashboard() {
                   <th className="px-3 py-2 text-right">현재가</th>
                   <th className="px-3 py-2 text-right">평가손익</th>
                   <th className="px-3 py-2 text-right">수익률</th>
+                  <th className="px-3 py-2 text-center">매도</th>
                 </tr>
               </thead>
               <tbody>
@@ -159,6 +187,15 @@ export function MockTradingDashboard() {
                     <td className={`px-3 py-2.5 text-right font-mono font-medium ${pos.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                       {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
                     </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <button
+                        onClick={() => { if (window.confirm(`${pos.name} ${pos.quantity}주를 매도합니까?`)) sellMutation.mutate({ symbol: pos.symbol, name: pos.name, quantity: pos.quantity, price: pos.currentPrice }); }}
+                        disabled={sellMutation.isPending}
+                        className="rounded bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
+                      >
+                        매도
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -172,9 +209,18 @@ export function MockTradingDashboard() {
                       <span className="text-xs font-medium text-white">{pos.name}</span>
                       <span className="ml-1.5 font-mono text-[10px] text-slate-500">{pos.symbol}</span>
                     </div>
-                    <span className={`text-xs font-bold ${pos.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                      {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold ${pos.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
+                      </span>
+                      <button
+                        onClick={() => { if (window.confirm(`${pos.name} 매도?`)) sellMutation.mutate({ symbol: pos.symbol, name: pos.name, quantity: pos.quantity, price: pos.currentPrice }); }}
+                        disabled={sellMutation.isPending}
+                        className="rounded bg-rose-500/10 px-2 py-1 text-[9px] font-bold text-rose-300 active:scale-95 disabled:opacity-50"
+                      >
+                        매도
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
                     <span>{pos.quantity}주 · 평단 {pos.averagePrice.toLocaleString()}</span>
@@ -235,6 +281,36 @@ export function MockTradingDashboard() {
           </div>
         )}
       </section>
+
+      {/* 매도 대기열 */}
+      {pendingSellList.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-bold text-amber-300">매도 대기열 ({pendingSellList.length}건)</h2>
+          <div className="space-y-2">
+            {pendingSellList.map(order => (
+              <div key={order.id} className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-950/10 px-3 sm:px-4 py-2.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">대기</span>
+                  <span className="text-xs font-medium text-white truncate">{order.name}</span>
+                  <span className="hidden sm:inline font-mono text-[10px] text-slate-500">{order.symbol}</span>
+                </div>
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                  <span className="font-mono text-[11px] text-slate-300">{order.quantity}주×{order.price.toLocaleString()}</span>
+                  <button
+                    onClick={() => cancelSellMutation.mutate({ id: order.id })}
+                    disabled={cancelSellMutation.isPending}
+                    className="flex items-center gap-0.5 rounded bg-slate-700/50 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-600/50 active:scale-95 disabled:opacity-50"
+                  >
+                    <X size={10} />
+                    취소
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">수집기 다음 실행 시 매도 주문이 처리됩니다.</p>
+        </section>
+      )}
     </div>
   );
 }

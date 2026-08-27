@@ -9475,6 +9475,125 @@ var mockTradingRouter = router({
     };
   }),
   /**
+   * 수동 매도 주문 생성 (HTS 매도 버튼)
+   * DB에 매도 의도를 생성하면, 수집기가 다음 실행 시 매도 실행
+   */
+  sellOrder: publicProcedure.input(z20.object({
+    symbol: z20.string().regex(/^\d{6}$/),
+    name: z20.string().min(1).max(120),
+    quantity: z20.number().int().positive(),
+    price: z20.number().int().positive(),
+    reason: z20.string().max(200).default("\uC218\uB3D9 \uB9E4\uB3C4")
+  })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
+    const tradingDate2 = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
+    const dedupeKey = `manual-sell:${input.symbol}:${tradingDate2}:${Date.now()}`;
+    const [intent] = await db.insert(orderIntents).values({
+      userId: admin.id,
+      symbol: input.symbol,
+      name: input.name,
+      side: "sell",
+      orderType: "limit",
+      quantity: input.quantity,
+      price: input.price,
+      amount: input.quantity * input.price,
+      status: "pending_confirmation",
+      riskReasonsJson: [input.reason],
+      executionOrigin: "local_node",
+      dedupeKey
+    }).returning();
+    return {
+      id: intent.id,
+      symbol: input.symbol,
+      name: input.name,
+      quantity: input.quantity,
+      price: input.price,
+      message: `${input.name} ${input.quantity}\uC8FC \uB9E4\uB3C4 \uC8FC\uBB38\uC774 \uB300\uAE30\uC5F4\uC5D0 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC218\uC9D1\uAE30 \uB2E4\uC74C \uC2E4\uD589 \uC2DC \uB9E4\uB3C4\uB429\uB2C8\uB2E4.`
+    };
+  }),
+  /**
+   * 전체 청산 (보유 종목 모두 매도 대기열에 추가)
+   */
+  liquidateAll: publicProcedure.mutation(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
+    if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
+    const snapshots = await db.select().from(positionSnapshots).orderBy(desc26(positionSnapshots.capturedAt)).limit(50);
+    const bySymbol = /* @__PURE__ */ new Map();
+    for (const snap of snapshots) {
+      if (!bySymbol.has(snap.symbol)) bySymbol.set(snap.symbol, snap);
+    }
+    const activePositions = Array.from(bySymbol.values()).filter((p) => p.quantity > 0);
+    if (!activePositions.length) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uCCAD\uC0B0\uD560 \uBCF4\uC720 \uC885\uBAA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    const tradingDate2 = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
+    const created = [];
+    for (const pos of activePositions) {
+      const dedupeKey = `liquidate-all:${pos.symbol}:${tradingDate2}:${Date.now()}`;
+      const [intent] = await db.insert(orderIntents).values({
+        userId: admin.id,
+        symbol: pos.symbol,
+        name: pos.name,
+        side: "sell",
+        orderType: "limit",
+        quantity: pos.quantity,
+        price: pos.currentPrice,
+        amount: pos.quantity * pos.currentPrice,
+        status: "pending_confirmation",
+        riskReasonsJson: ["\uC804\uCCB4 \uCCAD\uC0B0"],
+        executionOrigin: "local_node",
+        dedupeKey
+      }).returning();
+      created.push(intent.id);
+    }
+    return {
+      count: created.length,
+      symbols: activePositions.map((p) => p.symbol),
+      message: `${created.length}\uC885\uBAA9 \uC804\uCCB4 \uCCAD\uC0B0 \uC8FC\uBB38\uC774 \uB300\uAE30\uC5F4\uC5D0 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`
+    };
+  }),
+  /**
+   * 매도 대기열 조회 (pending_confirmation 상태의 sell 주문)
+   */
+  pendingSellOrders: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const pending = await db.select({
+      id: orderIntents.id,
+      symbol: orderIntents.symbol,
+      name: orderIntents.name,
+      quantity: orderIntents.quantity,
+      price: orderIntents.price,
+      status: orderIntents.status,
+      createdAt: orderIntents.createdAt
+    }).from(orderIntents).where(and22(
+      eq32(orderIntents.executionOrigin, "local_node"),
+      eq32(orderIntents.side, "sell"),
+      eq32(orderIntents.status, "pending_confirmation")
+    )).orderBy(desc26(orderIntents.createdAt)).limit(50);
+    return { orders: pending };
+  }),
+  /**
+   * 매도 주문 취소 (대기 중인 것만)
+   */
+  cancelSellOrder: publicProcedure.input(z20.object({ id: z20.number().int().positive() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [intent] = await db.select().from(orderIntents).where(and22(
+      eq32(orderIntents.id, input.id),
+      eq32(orderIntents.side, "sell"),
+      eq32(orderIntents.status, "pending_confirmation")
+    )).limit(1);
+    if (!intent) throw new TRPCError18({ code: "NOT_FOUND", message: "\uCDE8\uC18C\uD560 \uB9E4\uB3C4 \uC8FC\uBB38\uC744 \uCC3E\uC744 \uC218 \uC5C6\uAC70\uB098 \uC774\uBBF8 \uC2E4\uD589\uB418\uC5C8\uC2B5\uB2C8\uB2E4." });
+    await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["\uC0AC\uC6A9\uC790 \uCDE8\uC18C"] }).where(eq32(orderIntents.id, input.id));
+    return { id: input.id, message: `${intent.name} \uB9E4\uB3C4 \uC8FC\uBB38\uC774 \uCDE8\uC18C\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
    * 자동매매 프로필 전체 상태 (컨트롤 패널 메인 조회)
    */
   controlPanelStatus: publicProcedure.query(async () => {
@@ -12787,19 +12906,39 @@ function registerLocalResearchNodeRoutes(app2) {
       fitnessByCandidateId,
       maxPositions: policy.maxConcurrentPositions
     }) : { experimentId: null, tradingDate: tradingDate2, orders: [], status: "no_experiment" };
-    return response.json({ ...plan, totalCapital: policy.totalCapital, policy: {
-      id: policy.id,
-      version: policy.version,
+    return response.json({
+      ...plan,
       totalCapital: policy.totalCapital,
-      maxConcurrentPositions: policy.maxConcurrentPositions,
-      stopLossPercent: Number(policy.stopLossPercent),
-      takeProfitPercent: Number(policy.takeProfitPercent),
-      dailyLossLimitPercent: Number(policy.dailyLossLimitPercent),
-      entryTiming: policy.entryTiming ?? "prev_close_next_open",
-      maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"),
-      positionSizingMode: policy.positionSizingMode ?? "half_kelly",
-      positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10")
-    } });
+      policy: {
+        id: policy.id,
+        version: policy.version,
+        totalCapital: policy.totalCapital,
+        maxConcurrentPositions: policy.maxConcurrentPositions,
+        stopLossPercent: Number(policy.stopLossPercent),
+        takeProfitPercent: Number(policy.takeProfitPercent),
+        dailyLossLimitPercent: Number(policy.dailyLossLimitPercent),
+        entryTiming: policy.entryTiming ?? "prev_close_next_open",
+        maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"),
+        positionSizingMode: policy.positionSizingMode ?? "half_kelly",
+        positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10")
+      },
+      // 매도 대기열: 사이트에서 수동으로 생성된 매도 주문
+      sellOrders: await (async () => {
+        const pending = await db.select({
+          id: orderIntents.id,
+          symbol: orderIntents.symbol,
+          name: orderIntents.name,
+          quantity: orderIntents.quantity,
+          price: orderIntents.price,
+          dedupeKey: orderIntents.dedupeKey
+        }).from(orderIntents).where(and30(
+          eq41(orderIntents.executionOrigin, "local_node"),
+          eq41(orderIntents.side, "sell"),
+          eq41(orderIntents.status, "pending_confirmation")
+        )).orderBy(desc34(orderIntents.createdAt)).limit(20);
+        return pending;
+      })()
+    });
   });
   app2.post("/api/local-research-node/execution-sync", async (request, response) => {
     response.setHeader("Cache-Control", "no-store, private, max-age=0");

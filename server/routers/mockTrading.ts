@@ -888,6 +888,153 @@ export const mockTradingRouter = router({
   }),
 
   /**
+   * 수동 매도 주문 생성 (HTS 매도 버튼)
+   * DB에 매도 의도를 생성하면, 수집기가 다음 실행 시 매도 실행
+   */
+  sellOrder: publicProcedure
+    .input(z.object({
+      symbol: z.string().regex(/^\d{6}$/),
+      name: z.string().min(1).max(120),
+      quantity: z.number().int().positive(),
+      price: z.number().int().positive(),
+      reason: z.string().max(200).default("수동 매도"),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const { users } = await import("../../drizzle/schema");
+      const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+      if (!admin) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "관리자 계정이 필요합니다." });
+
+      const tradingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+      const dedupeKey = `manual-sell:${input.symbol}:${tradingDate}:${Date.now()}`;
+
+      const [intent] = await db.insert(orderIntents).values({
+        userId: admin.id,
+        symbol: input.symbol,
+        name: input.name,
+        side: "sell",
+        orderType: "limit",
+        quantity: input.quantity,
+        price: input.price,
+        amount: input.quantity * input.price,
+        status: "pending_confirmation",
+        riskReasonsJson: [input.reason],
+        executionOrigin: "local_node",
+        dedupeKey,
+      }).returning();
+
+      return {
+        id: intent.id,
+        symbol: input.symbol,
+        name: input.name,
+        quantity: input.quantity,
+        price: input.price,
+        message: `${input.name} ${input.quantity}주 매도 주문이 대기열에 추가되었습니다. 수집기 다음 실행 시 매도됩니다.`,
+      };
+    }),
+
+  /**
+   * 전체 청산 (보유 종목 모두 매도 대기열에 추가)
+   */
+  liquidateAll: publicProcedure.mutation(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+    const { users } = await import("../../drizzle/schema");
+    const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+    if (!admin) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "관리자 계정이 필요합니다." });
+
+    // 현재 보유 포지션 조회
+    const snapshots = await db.select().from(positionSnapshots).orderBy(desc(positionSnapshots.capturedAt)).limit(50);
+    const bySymbol = new Map<string, typeof snapshots[0]>();
+    for (const snap of snapshots) { if (!bySymbol.has(snap.symbol)) bySymbol.set(snap.symbol, snap); }
+    const activePositions = Array.from(bySymbol.values()).filter(p => p.quantity > 0);
+
+    if (!activePositions.length) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "청산할 보유 종목이 없습니다." });
+
+    const tradingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const created: number[] = [];
+
+    for (const pos of activePositions) {
+      const dedupeKey = `liquidate-all:${pos.symbol}:${tradingDate}:${Date.now()}`;
+      const [intent] = await db.insert(orderIntents).values({
+        userId: admin.id,
+        symbol: pos.symbol,
+        name: pos.name,
+        side: "sell",
+        orderType: "limit",
+        quantity: pos.quantity,
+        price: pos.currentPrice,
+        amount: pos.quantity * pos.currentPrice,
+        status: "pending_confirmation",
+        riskReasonsJson: ["전체 청산"],
+        executionOrigin: "local_node",
+        dedupeKey,
+      }).returning();
+      created.push(intent.id);
+    }
+
+    return {
+      count: created.length,
+      symbols: activePositions.map(p => p.symbol),
+      message: `${created.length}종목 전체 청산 주문이 대기열에 추가되었습니다.`,
+    };
+  }),
+
+  /**
+   * 매도 대기열 조회 (pending_confirmation 상태의 sell 주문)
+   */
+  pendingSellOrders: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+    const pending = await db
+      .select({
+        id: orderIntents.id,
+        symbol: orderIntents.symbol,
+        name: orderIntents.name,
+        quantity: orderIntents.quantity,
+        price: orderIntents.price,
+        status: orderIntents.status,
+        createdAt: orderIntents.createdAt,
+      })
+      .from(orderIntents)
+      .where(and(
+        eq(orderIntents.executionOrigin, "local_node"),
+        eq(orderIntents.side, "sell"),
+        eq(orderIntents.status, "pending_confirmation"),
+      ))
+      .orderBy(desc(orderIntents.createdAt))
+      .limit(50);
+
+    return { orders: pending };
+  }),
+
+  /**
+   * 매도 주문 취소 (대기 중인 것만)
+   */
+  cancelSellOrder: publicProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [intent] = await db.select().from(orderIntents).where(and(
+        eq(orderIntents.id, input.id),
+        eq(orderIntents.side, "sell"),
+        eq(orderIntents.status, "pending_confirmation"),
+      )).limit(1);
+
+      if (!intent) throw new TRPCError({ code: "NOT_FOUND", message: "취소할 매도 주문을 찾을 수 없거나 이미 실행되었습니다." });
+
+      await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["사용자 취소"] }).where(eq(orderIntents.id, input.id));
+
+      return { id: input.id, message: `${intent.name} 매도 주문이 취소되었습니다.` };
+    }),
+
+  /**
    * 자동매매 프로필 전체 상태 (컨트롤 패널 메인 조회)
    */
   controlPanelStatus: publicProcedure.query(async () => {

@@ -58,6 +58,11 @@ export function MobileLiveMonitor() {
     onError: (err) => toast.error(err.message),
   });
 
+  const sellMutation = trpc.mockTrading.sellOrder.useMutation({
+    onSuccess: (data) => { toast.success(data.message); positions.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+
   const positionList = positions.data?.positions ?? [];
   const summary = positions.data?.summary;
   const pnl = todayPnl.data;
@@ -225,12 +230,21 @@ export function MobileLiveMonitor() {
                     <p className="text-sm font-semibold">{p.name}</p>
                     <p className="text-[10px] text-slate-500">{p.symbol} · {p.quantity}주 · 평단 {p.averagePrice.toLocaleString()}원</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-mono">{p.currentPrice.toLocaleString()}원</p>
-                    <p className={`text-[11px] font-bold ${p.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                      {p.profitLossRate >= 0 ? <ArrowUpRight size={10} className="mr-0.5 inline" /> : <ArrowDownRight size={10} className="mr-0.5 inline" />}
-                      {p.profitLossRate >= 0 ? "+" : ""}{p.profitLossRate.toFixed(2)}%
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <div className="text-right">
+                      <p className="text-sm font-mono">{p.currentPrice.toLocaleString()}원</p>
+                      <p className={`text-[11px] font-bold ${p.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                        {p.profitLossRate >= 0 ? <ArrowUpRight size={10} className="mr-0.5 inline" /> : <ArrowDownRight size={10} className="mr-0.5 inline" />}
+                        {p.profitLossRate >= 0 ? "+" : ""}{p.profitLossRate.toFixed(2)}%
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { if (window.confirm(`${p.name} ${p.quantity}주 매도?`)) sellMutation.mutate({ symbol: p.symbol, name: p.name, quantity: p.quantity, price: p.currentPrice }); }}
+                      disabled={sellMutation.isPending}
+                      className="rounded bg-rose-500/15 px-2.5 py-1.5 text-[10px] font-bold text-rose-300 active:scale-95 disabled:opacity-50"
+                    >
+                      매도
+                    </button>
                   </div>
                 </div>
               </div>

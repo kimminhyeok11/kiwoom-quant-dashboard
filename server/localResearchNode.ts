@@ -1117,7 +1117,24 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"),
       positionSizingMode: policy.positionSizingMode ?? "half_kelly",
       positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10"),
-    } });
+    },
+    // 매도 대기열: 사이트에서 수동으로 생성된 매도 주문
+    sellOrders: await (async () => {
+      const pending = await db.select({
+        id: orderIntents.id,
+        symbol: orderIntents.symbol,
+        name: orderIntents.name,
+        quantity: orderIntents.quantity,
+        price: orderIntents.price,
+        dedupeKey: orderIntents.dedupeKey,
+      }).from(orderIntents).where(and(
+        eq(orderIntents.executionOrigin, "local_node"),
+        eq(orderIntents.side, "sell"),
+        eq(orderIntents.status, "pending_confirmation"),
+      )).orderBy(desc(orderIntents.createdAt)).limit(20);
+      return pending;
+    })(),
+    });
   });
 
   app.post("/api/local-research-node/execution-sync", async (request, response) => {
