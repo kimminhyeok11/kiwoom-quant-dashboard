@@ -405,21 +405,18 @@ export const mockTradingRouter = router({
     const concentrationTriggered = maxPositionPercent >= maxConcentration;
     const safetyTriggered = dailyLossTriggered;
 
-    // 킬스위치 자동 발동
-    if (safetyTriggered) {
-      const { users } = await import("../../drizzle/schema");
-      const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
-      if (admin) {
-        const existing = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, admin.id)).limit(1))[0];
-        if (existing && !existing.killSwitch) {
-          await db.update(tradingProfiles).set({ killSwitch: true }).where(eq(tradingProfiles.id, existing.id));
-        }
-      }
+    // 킬스위치 상태는 DB에서 읽기만 (쓰기는 checkAndTriggerSafety mutation에서 수행)
+    const { users } = await import("../../drizzle/schema");
+    const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+    let killSwitch = false;
+    if (admin) {
+      const existing = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, admin.id)).limit(1))[0];
+      killSwitch = existing?.killSwitch ?? false;
     }
 
     return {
       active: true,
-      killSwitch: safetyTriggered,
+      killSwitch,
       safetyTriggered,
       limits: {
         dailyLossLimit: dailyLossLimit,
@@ -440,6 +437,56 @@ export const mockTradingRouter = router({
         concentration: { triggered: concentrationTriggered, current: Number(maxPositionPercent.toFixed(1)), limit: maxConcentration },
       },
     };
+  }),
+
+  /**
+   * 안전장치 체크 + 킬스위치 자동 발동 (mutation — query에서 분리)
+   * 프론트엔드가 safetyTriggered=true 감지 시 호출
+   */
+  checkAndTriggerSafety: publicProcedure.mutation(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+    const [policy] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.status, "active")).orderBy(desc(autoTradePolicies.createdAt)).limit(1);
+    if (!policy) return { triggered: false, message: "활성 정책 없음" };
+
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const todayStart = new Date(today + "T00:00:00+09:00");
+    const todaySells = await db.select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity })
+      .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled"), eq(orderIntents.side, "sell"), gte(orderIntents.createdAt, todayStart)));
+
+    let realizedPnl = 0;
+    if (todaySells.length > 0) {
+      const sellSymbols = Array.from(new Set(todaySells.map(o => o.symbol)));
+      const buyHistory = await db.select({ symbol: orderIntents.symbol, price: orderIntents.price, quantity: orderIntents.quantity })
+        .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled"), eq(orderIntents.side, "buy"), inArray(orderIntents.symbol, sellSymbols)));
+      const avgBuyBySymbol = new Map<string, number>();
+      const grouped = new Map<string, typeof buyHistory>();
+      for (const b of buyHistory) { const list = grouped.get(b.symbol) ?? []; list.push(b); grouped.set(b.symbol, list); }
+      for (const [symbol, buys] of Array.from(grouped.entries())) {
+        const totalCost = buys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = buys.reduce((s, b) => s + b.quantity, 0);
+        if (totalQty > 0) avgBuyBySymbol.set(symbol, Math.round(totalCost / totalQty));
+      }
+      for (const sell of todaySells) { realizedPnl += (sell.price - (avgBuyBySymbol.get(sell.symbol) ?? sell.price)) * sell.quantity; }
+    }
+
+    const realizedPnlPercent = policy.totalCapital > 0 ? (realizedPnl / Number(policy.totalCapital)) * 100 : 0;
+    const dailyLossLimit = Number(policy.dailyLossLimitPercent);
+    const shouldTrigger = realizedPnlPercent <= -dailyLossLimit;
+
+    if (shouldTrigger) {
+      const { users } = await import("../../drizzle/schema");
+      const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+      if (admin) {
+        const existing = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, admin.id)).limit(1))[0];
+        if (existing && !existing.killSwitch) {
+          await db.update(tradingProfiles).set({ killSwitch: true }).where(eq(tradingProfiles.id, existing.id));
+        }
+      }
+    }
+
+    return { triggered: shouldTrigger, realizedPnlPercent: Number(realizedPnlPercent.toFixed(2)), limit: -dailyLossLimit };
   }),
 
   /**

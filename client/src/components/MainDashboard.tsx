@@ -106,7 +106,7 @@ const NAV: NavItem[] = [
     subPages: [
       { id: "mock-trading", label: "모의투자", icon: TrendingUp },
       { id: "control-panel", label: "제어판", icon: SlidersHorizontal },
-      { id: "live-monitor", label: "실시간 추적", icon: Rocket },
+      { id: "live-monitor", label: "AI 시뮬레이션", icon: Rocket },
       { id: "performance", label: "성과 리포트", icon: BarChart3 },
     ],
   },

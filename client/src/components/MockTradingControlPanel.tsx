@@ -9,7 +9,7 @@
  * - 안전장치 상태
  */
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -99,6 +99,19 @@ function MainControlSection() {
   const pnl = todayPnl.data;
   const isConnected = collector.data?.connected ?? false;
   const lastSyncAt = collector.data?.lastSyncAt ? new Date(collector.data.lastSyncAt) : null;
+
+  // safetyTriggered 감지 시 킬스위치 자동 발동 (mutation으로 분리된 side-effect)
+  const triggerSafetyMutation = trpc.mockTrading.checkAndTriggerSafety.useMutation({
+    onSuccess: (data) => { if (data.triggered) { status.refetch(); safety.refetch(); } },
+  });
+  const safetyTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (safetyTriggered && !safetyTriggeredRef.current && !triggerSafetyMutation.isPending) {
+      safetyTriggeredRef.current = true;
+      triggerSafetyMutation.mutate();
+    }
+    if (!safetyTriggered) safetyTriggeredRef.current = false;
+  }, [safetyTriggered]);
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 sm:p-5">

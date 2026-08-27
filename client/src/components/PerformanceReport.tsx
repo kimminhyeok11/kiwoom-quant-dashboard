@@ -97,6 +97,11 @@ export function PerformanceReport() {
             />
           </div>
 
+          {/* 누적 수익률 차트 */}
+          {s.recentTrades.length >= 2 && (
+            <CumulativeReturnChart trades={s.recentTrades} />
+          )}
+
           {/* 슬리피지 분석 */}
           {slippage.data && slippage.data.totalMeasured > 0 && (
             <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-5">
@@ -162,14 +167,14 @@ export function PerformanceReport() {
                         <td className="px-3 py-2 text-right text-slate-300">{c.config.sizing.replace("_", " ")}</td>
                         <td className="px-3 py-2 text-right text-white">{c.actual.tradeCount}건</td>
                         <td className={`px-3 py-2 text-right font-bold ${
-                          c.actual.winRate !== null && c.actual.winRate >= 50 ? "text-red-400" : "text-blue-400"
+                          c.actual.winRate !== null && c.actual.winRate >= 50 ? "text-emerald-300" : "text-rose-300"
                         }`}>
                           {c.actual.winRate !== null ? `${c.actual.winRate}%` : "—"}
                         </td>
-                        <td className={`px-3 py-2 text-right ${c.actual.avgReturn >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                        <td className={`px-3 py-2 text-right ${c.actual.avgReturn >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                           {c.actual.avgReturn >= 0 ? "+" : ""}{c.actual.avgReturn}%
                         </td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold ${c.actual.totalPnl >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${c.actual.totalPnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                           {c.actual.totalPnl >= 0 ? "+" : ""}{c.actual.totalPnl.toLocaleString()}원
                         </td>
                       </tr>
@@ -212,7 +217,7 @@ export function PerformanceReport() {
                         <td className="px-3 py-2 text-right font-mono text-slate-300">{t.sellPrice.toLocaleString()}</td>
                         <td className="px-3 py-2 text-right text-slate-400">{t.quantity}주</td>
                         <td className="px-3 py-2 text-right">
-                          <span className={`inline-flex items-center gap-0.5 font-bold ${t.returnPercent >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                          <span className={`inline-flex items-center gap-0.5 font-bold ${t.returnPercent >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                             {t.returnPercent >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
                             {t.returnPercent >= 0 ? "+" : ""}{t.returnPercent}%
                           </span>
@@ -263,5 +268,120 @@ function MetricCard({
       <p className={`mt-2 font-mono text-xl font-bold ${valueColors[tone]}`}>{value}</p>
       <p className="mt-1 text-[10px] text-slate-500">{detail}</p>
     </div>
+  );
+}
+
+// ─── 누적 수익률 차트 ───
+function CumulativeReturnChart({ trades }: { trades: Array<{ returnPercent: number; sellDate: string; symbol: string; name: string }> }) {
+  // 날짜순 정렬 + 누적 수익률 계산
+  const sorted = [...trades].sort((a, b) => a.sellDate.localeCompare(b.sellDate));
+  const cumulative: Array<{ date: string; value: number; trade: typeof sorted[0] }> = [];
+  let cum = 0;
+  for (const t of sorted) {
+    cum += t.returnPercent;
+    cumulative.push({ date: t.sellDate, value: Number(cum.toFixed(2)), trade: t });
+  }
+
+  if (cumulative.length < 2) return null;
+
+  const width = 600;
+  const height = 180;
+  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+  const chartW = width - padding.left - padding.right;
+  const chartH = height - padding.top - padding.bottom;
+
+  const values = cumulative.map(d => d.value);
+  const minVal = Math.min(0, ...values);
+  const maxVal = Math.max(0, ...values);
+  const range = maxVal - minVal || 1;
+
+  const xStep = chartW / (cumulative.length - 1);
+  const toY = (v: number) => padding.top + chartH - ((v - minVal) / range) * chartH;
+  const zeroY = toY(0);
+
+  // SVG path
+  const pathD = cumulative
+    .map((d, i) => `${i === 0 ? "M" : "L"}${padding.left + i * xStep},${toY(d.value)}`)
+    .join(" ");
+
+  // Fill area (path to zero line)
+  const areaD = pathD +
+    ` L${padding.left + (cumulative.length - 1) * xStep},${zeroY}` +
+    ` L${padding.left},${zeroY} Z`;
+
+  const lastValue = cumulative[cumulative.length - 1].value;
+  const isPositive = lastValue >= 0;
+  const strokeColor = isPositive ? "#34d399" : "#fb7185";
+  const fillColor = isPositive ? "rgba(52,211,153,0.08)" : "rgba(251,113,133,0.08)";
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp size={14} className={isPositive ? "text-emerald-400" : "text-rose-400"} />
+          <h2 className="text-sm font-bold text-white">누적 수익률 추이</h2>
+        </div>
+        <span className={`font-mono text-sm font-bold ${isPositive ? "text-emerald-300" : "text-rose-300"}`}>
+          {lastValue >= 0 ? "+" : ""}{lastValue.toFixed(2)}%
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[400px] w-full" role="img" aria-label="누적 수익률 차트">
+          {/* Grid lines */}
+          <line x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} stroke="#334155" strokeDasharray="4 4" />
+          <line x1={padding.left} x2={padding.left} y1={padding.top} y2={height - padding.bottom} stroke="#1e293b" />
+
+          {/* Area fill */}
+          <path d={areaD} fill={fillColor} />
+
+          {/* Line */}
+          <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Dots on each trade */}
+          {cumulative.map((d, i) => (
+            <circle
+              key={i}
+              cx={padding.left + i * xStep}
+              cy={toY(d.value)}
+              r="3"
+              fill={d.trade.returnPercent >= 0 ? "#34d399" : "#fb7185"}
+              stroke="#0f172a"
+              strokeWidth="1.5"
+            />
+          ))}
+
+          {/* Y-axis labels */}
+          <text x={padding.left - 5} y={padding.top + 4} textAnchor="end" fill="#64748b" fontSize="10">
+            {maxVal.toFixed(1)}%
+          </text>
+          <text x={padding.left - 5} y={zeroY + 4} textAnchor="end" fill="#94a3b8" fontSize="10">
+            0%
+          </text>
+          {minVal < 0 && (
+            <text x={padding.left - 5} y={height - padding.bottom} textAnchor="end" fill="#64748b" fontSize="10">
+              {minVal.toFixed(1)}%
+            </text>
+          )}
+
+          {/* X-axis labels (first and last date) */}
+          <text x={padding.left} y={height - 8} fill="#64748b" fontSize="10">
+            {cumulative[0].date}
+          </text>
+          <text x={width - padding.right} y={height - 8} textAnchor="end" fill="#64748b" fontSize="10">
+            {cumulative[cumulative.length - 1].date}
+          </text>
+
+          {/* Trade count */}
+          <text x={width - padding.right} y={padding.top - 4} textAnchor="end" fill="#475569" fontSize="9">
+            {cumulative.length}건 거래
+          </text>
+        </svg>
+      </div>
+
+      <p className="mt-2 text-[10px] text-slate-500">
+        각 점은 완결된 거래(매수→매도)이며, 수익률을 누적합산한 곡선입니다.
+      </p>
+    </section>
   );
 }
