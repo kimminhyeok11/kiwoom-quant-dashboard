@@ -66,14 +66,14 @@ export function MockTradingDashboard() {
           label="미실현 평가손익"
           value={summary ? `${summary.totalProfitLoss >= 0 ? "+" : ""}${summary.totalProfitLoss.toLocaleString()}원` : "—"}
           detail={summary ? `${summary.totalProfitLossRate >= 0 ? "+" : ""}${summary.totalProfitLossRate.toFixed(2)}% (보유 중 종목)` : ""}
-          tone={summary && summary.totalProfitLoss >= 0 ? "red" : "blue"}
+          tone={summary && summary.totalProfitLoss >= 0 ? "green" : "rose"}
         />
         <SummaryCard
           icon={Activity}
           label="오늘 실현손익"
           value={todayPnl.data ? `${todayPnl.data.realizedPnl >= 0 ? "+" : ""}${todayPnl.data.realizedPnl.toLocaleString()}원` : "—"}
           detail={todayPnl.data ? `체결 ${todayPnl.data.filledOrderCount}건 (매수 ${todayPnl.data.buyOrderCount} / 매도 ${todayPnl.data.sellOrderCount})` : ""}
-          tone={todayPnl.data && todayPnl.data.realizedPnl >= 0 ? "red" : "blue"}
+          tone={todayPnl.data && todayPnl.data.realizedPnl >= 0 ? "green" : "rose"}
         />
         <SummaryCard
           icon={ShieldCheck}
@@ -153,10 +153,10 @@ export function MockTradingDashboard() {
                     <td className="px-3 py-2.5 text-right font-mono text-white">{pos.quantity.toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-slate-300">{pos.averagePrice.toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-white">{pos.currentPrice.toLocaleString()}</td>
-                    <td className={`px-3 py-2.5 text-right font-mono font-medium ${pos.profitLoss >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                    <td className={`px-3 py-2.5 text-right font-mono font-medium ${pos.profitLoss >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                       {pos.profitLoss >= 0 ? "+" : ""}{pos.profitLoss.toLocaleString()}
                     </td>
-                    <td className={`px-3 py-2.5 text-right font-mono font-medium ${pos.profitLossRate >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                    <td className={`px-3 py-2.5 text-right font-mono font-medium ${pos.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                       {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
                     </td>
                   </tr>
@@ -172,13 +172,13 @@ export function MockTradingDashboard() {
                       <span className="text-xs font-medium text-white">{pos.name}</span>
                       <span className="ml-1.5 font-mono text-[10px] text-slate-500">{pos.symbol}</span>
                     </div>
-                    <span className={`text-xs font-bold ${pos.profitLossRate >= 0 ? "text-red-400" : "text-blue-400"}`}>
+                    <span className={`text-xs font-bold ${pos.profitLossRate >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                       {pos.profitLossRate >= 0 ? "+" : ""}{pos.profitLossRate.toFixed(2)}%
                     </span>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
                     <span>{pos.quantity}주 · 평단 {pos.averagePrice.toLocaleString()}</span>
-                    <span className={pos.profitLoss >= 0 ? "text-red-400/80" : "text-blue-400/80"}>
+                    <span className={pos.profitLoss >= 0 ? "text-emerald-300/80" : "text-rose-300/80"}>
                       {pos.profitLoss >= 0 ? "+" : ""}{pos.profitLoss.toLocaleString()}원
                     </span>
                   </div>
@@ -225,6 +225,9 @@ export function MockTradingDashboard() {
                        order.status === "rejected" ? "거부" :
                        order.status}
                     </span>
+                    <span className="hidden sm:inline text-[9px] text-slate-500 font-mono">
+                      {new Date(order.createdAt).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit" })}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -241,12 +244,12 @@ function SummaryCard({ icon: Icon, label, value, detail, tone }: {
   label: string;
   value: string;
   detail: string;
-  tone: "white" | "red" | "blue" | "violet";
+  tone: "white" | "green" | "rose" | "violet";
 }) {
   const colors = {
     white: "text-white",
-    red: "text-red-400",
-    blue: "text-blue-400",
+    green: "text-emerald-300",
+    rose: "text-rose-300",
     violet: "text-violet-300",
   };
   return (

@@ -702,6 +702,7 @@ function FormField({ label, value, onChange, suffix, type = "text", step }: {
           type={type}
           value={value}
           step={step}
+          inputMode={type === "number" ? "decimal" : undefined}
           onChange={(e) => onChange(e.target.value)}
           className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-teal-500 focus:outline-none"
         />
