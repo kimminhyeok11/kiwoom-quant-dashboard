@@ -2,15 +2,22 @@ import "dotenv/config";
 import express, { type Express } from "express";
 import { createServer } from "http";
 import net from "net";
+
+// Prevent unhandled promise rejections from crashing the server
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED REJECTION]", reason instanceof Error ? reason.message : reason);
+});
+
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
 import { rankingRefreshHandler } from "../scheduled/rankingRefresh";
 import { autonomousResearchHandler } from "../scheduled/autonomousResearch";
 import { researchGovernanceHandler } from "../scheduled/researchGovernance";
 import { minuteResearchHandler } from "../scheduled/minuteResearch";
+import { dailyReportHandler } from "../scheduled/dailyReport";
+import { feedbackLoopHandler } from "../scheduled/feedbackLoop";
 import { trpcJsonFallback } from "./trpcJsonFallback";
 import { registerLocalResearchNodeRoutes } from "../localResearchNode";
 
@@ -45,6 +52,8 @@ export function registerApiRoutes(app: Express) {
   app.post("/api/scheduled/autonomous-research", (req, res) => void autonomousResearchHandler(req, res));
   app.post("/api/scheduled/research-governance", (req, res) => void researchGovernanceHandler(req, res));
   app.post("/api/scheduled/minute-research", (req, res) => void minuteResearchHandler(req, res));
+  app.post("/api/scheduled/daily-report", (req, res) => void dailyReportHandler(req, res));
+  app.post("/api/scheduled/feedback-loop", (req, res) => void feedbackLoopHandler(req, res));
   // Public research results can change between requests; never let browsers or edges reuse a stale tRPC payload.
   app.use("/api/trpc", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store, private, max-age=0");
@@ -69,6 +78,7 @@ async function startServer() {
   const server = createServer(app);
   registerApiRoutes(app);
   // development mode uses Vite, production mode uses static files
+  const { serveStatic, setupVite } = await import("./vite");
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
