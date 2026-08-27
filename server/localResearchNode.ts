@@ -1233,4 +1233,176 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     await db.update(bulkMinuteCollectionRequests).set(updateData).where(eq(bulkMinuteCollectionRequests.id, requestId));
     return response.json({ status: "updated", requestId });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // 자체 모의매매 피드백 루프 엔드포인트
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /api/local-research-node/trade-result-sync
+   * 로컬 모의매매 결과를 서버에 저장 + 피드백 분석 반환
+   */
+  app.post("/api/local-research-node/trade-result-sync", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const body = request.body as { tradingDate?: string; orders?: unknown[]; positions?: unknown[]; policy?: unknown } | undefined;
+    if (!body?.tradingDate || !Array.isArray(body.orders)) return response.status(400).json({ status: "invalid_request" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+
+    // 주문 결과 저장 (orderIntents에 기록)
+    const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+    if (!admin) return response.status(500).json({ status: "no_admin" });
+    const accepted: number[] = [];
+    for (const raw of body.orders) {
+      const o = raw as Record<string, unknown>;
+      const side = o.side === "sell" ? "sell" : "buy";
+      const symbol = String(o.symbol ?? "").trim();
+      const name = String(o.name ?? symbol);
+      const quantity = Number(o.quantity) || 0;
+      const price = Number(o.price) || 0;
+      const dedupeKey = String(o.dedupeKey ?? `sim-${side}-${symbol}-${body.tradingDate}-${Date.now()}`);
+      if (!symbol || quantity <= 0 || price <= 0) continue;
+      try {
+        const [intent] = await db.insert(orderIntents).values({
+          userId: admin.id, symbol, name, side, orderType: "limit", quantity, price,
+          amount: quantity * price, status: "filled", executionOrigin: "local_node", dedupeKey,
+        }).onConflictDoNothing().returning();
+        if (intent) accepted.push(intent.id);
+      } catch { /* 중복 무시 */ }
+    }
+
+    // 포지션 스냅샷 저장
+    if (Array.isArray(body.positions)) {
+      for (const raw of body.positions) {
+        const p = raw as Record<string, unknown>;
+        const symbol = String(p.symbol ?? "").trim();
+        if (!symbol) continue;
+        try {
+          await db.insert(positionSnapshots).values({
+            userId: admin.id, symbol, name: String(p.name ?? symbol),
+            quantity: Math.floor(Number(p.quantity) || 0),
+            averagePrice: Math.floor(Number(p.averagePrice) || 0),
+            currentPrice: Math.floor(Number(p.currentPrice) || 0),
+            profitLoss: Math.floor(Number(p.profitLoss) || 0),
+            profitLossRate: String(Number(p.profitLossRate) || 0),
+          });
+        } catch { /* 무시 */ }
+      }
+    }
+
+    // 피드백 분석: 최근 거래 결과에서 최적 파라미터 도출
+    const recentOrders = await db.select({ side: orderIntents.side, price: orderIntents.price, symbol: orderIntents.symbol, createdAt: orderIntents.createdAt })
+      .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled")))
+      .orderBy(desc(orderIntents.createdAt)).limit(200);
+
+    // 라운드트립 구성
+    const bySymbol = new Map<string, Array<{ side: string; price: number; createdAt: Date }>>();
+    for (const o of recentOrders) { const list = bySymbol.get(o.symbol) ?? []; list.push(o); bySymbol.set(o.symbol, list); }
+    const roundTrips: Array<{ returnPct: number }> = [];
+    for (const [, trades] of Array.from(bySymbol.entries())) {
+      const buys = trades.filter(t => t.side === "buy").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const sells = trades.filter(t => t.side === "sell").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      for (let i = 0; i < Math.min(buys.length, sells.length); i++) {
+        roundTrips.push({ returnPct: ((sells[i].price - buys[i].price) / buys[i].price) * 100 });
+      }
+    }
+
+    // 최적 파라미터 계산
+    const wins = roundTrips.filter(t => t.returnPct > 0);
+    const losses = roundTrips.filter(t => t.returnPct <= 0);
+    const winRate = roundTrips.length > 0 ? wins.length / roundTrips.length : 0.5;
+    const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.returnPct, 0) / wins.length : 3;
+    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.returnPct, 0) / losses.length) : 2;
+
+    // 손실 분포 P75 → 최적 SL, 수익 중간값 → 최적 TP
+    const lossValues = losses.map(t => Math.abs(t.returnPct)).sort((a, b) => a - b);
+    const winValues = wins.map(t => t.returnPct).sort((a, b) => a - b);
+    const optimalSL = lossValues.length >= 3 ? lossValues[Math.floor(lossValues.length * 0.75)] : 3;
+    const optimalTP = winValues.length >= 3 ? winValues[Math.floor(winValues.length * 0.5)] : 5;
+
+    // Kelly
+    const b = avgLoss > 0 ? avgWin / avgLoss : 1;
+    const kelly = Math.max(0, (winRate * b - (1 - winRate)) / b);
+
+    const feedback = {
+      roundTrips: roundTrips.length,
+      winRate: Number((winRate * 100).toFixed(1)),
+      avgWinPct: Number(avgWin.toFixed(2)),
+      avgLossPct: Number(avgLoss.toFixed(2)),
+      profitFactor: avgLoss > 0 ? Number((avgWin * wins.length / (avgLoss * losses.length)).toFixed(2)) : null,
+      optimal: {
+        stopLossPct: Number(Math.min(5, Math.max(1.5, optimalSL)).toFixed(1)),
+        takeProfitPct: Number(Math.min(10, Math.max(2, optimalTP)).toFixed(1)),
+        kellyFraction: Number(kelly.toFixed(3)),
+        maxPositions: kelly >= 0.2 ? 3 : kelly >= 0.1 ? 5 : 7,
+      },
+    };
+
+    return response.json({ status: "synced", accepted: accepted.length, feedback });
+  });
+
+  /**
+   * GET /api/local-research-node/strategy-config
+   * 로컬이 시작할 때 최적화된 조건식 설정을 받아감
+   */
+  app.get("/api/local-research-node/strategy-config", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+
+    // 활성 정책
+    const [policy] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.status, "active")).orderBy(desc(autoTradePolicies.updatedAt)).limit(1);
+
+    // 최근 피드백 데이터에서 최적값 도출 (위와 동일 로직 간소화)
+    const recentOrders = await db.select({ side: orderIntents.side, price: orderIntents.price, symbol: orderIntents.symbol, createdAt: orderIntents.createdAt })
+      .from(orderIntents).where(and(eq(orderIntents.executionOrigin, "local_node"), eq(orderIntents.status, "filled")))
+      .orderBy(desc(orderIntents.createdAt)).limit(200);
+
+    const bySymbol = new Map<string, Array<{ side: string; price: number; createdAt: Date }>>();
+    for (const o of recentOrders) { const list = bySymbol.get(o.symbol) ?? []; list.push(o); bySymbol.set(o.symbol, list); }
+    const roundTrips: Array<{ returnPct: number }> = [];
+    for (const [, trades] of Array.from(bySymbol.entries())) {
+      const buys = trades.filter(t => t.side === "buy").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const sells = trades.filter(t => t.side === "sell").sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      for (let i = 0; i < Math.min(buys.length, sells.length); i++) {
+        roundTrips.push({ returnPct: ((sells[i].price - buys[i].price) / buys[i].price) * 100 });
+      }
+    }
+
+    const wins = roundTrips.filter(t => t.returnPct > 0);
+    const losses = roundTrips.filter(t => t.returnPct <= 0);
+    const winRate = roundTrips.length >= 10 ? wins.length / roundTrips.length : 0.5;
+    const avgWin = wins.length ? wins.reduce((s, t) => s + t.returnPct, 0) / wins.length : 3;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((s, t) => s + t.returnPct, 0) / losses.length) : 2;
+    const lossValues = losses.map(t => Math.abs(t.returnPct)).sort((a, b) => a - b);
+    const winValues = wins.map(t => t.returnPct).sort((a, b) => a - b);
+
+    // 거래 이력이 10건 미만이면 기본값 사용
+    const hasEnoughData = roundTrips.length >= 10;
+    const config = {
+      policy: policy ? {
+        totalCapital: policy.totalCapital,
+        maxPositions: policy.maxConcurrentPositions,
+        stopLossPct: Number(policy.stopLossPercent),
+        takeProfitPct: Number(policy.takeProfitPercent),
+      } : { totalCapital: 10_000_000, maxPositions: 5, stopLossPct: 3, takeProfitPct: 5 },
+      optimized: hasEnoughData ? {
+        stopLossPct: Number(Math.min(5, Math.max(1.5, lossValues[Math.floor(lossValues.length * 0.75)] ?? 3)).toFixed(1)),
+        takeProfitPct: Number(Math.min(10, Math.max(2, winValues[Math.floor(winValues.length * 0.5)] ?? 5)).toFixed(1)),
+        entryThreshold: winRate >= 0.5 ? -1.5 : -2.0, // 승률 높으면 진입 느슨, 낮으면 까다롭게
+        maxPositionPct: 30, // 저가 위치 기준
+      } : null,
+      signal: {
+        // 조건식 파라미터 — 피드백 기반 조정
+        minDropPct: hasEnoughData && winRate >= 0.5 ? -1.2 : -1.5,
+        maxLowPosition: hasEnoughData && winRate >= 0.5 ? 0.35 : 0.30,
+        minPrice: 1000,
+      },
+      stats: { roundTrips: roundTrips.length, winRate: Number((winRate * 100).toFixed(1)), avgWin: Number(avgWin.toFixed(2)), avgLoss: Number(avgLoss.toFixed(2)) },
+    };
+
+    return response.json({ status: "ok", config });
+  });
 }
