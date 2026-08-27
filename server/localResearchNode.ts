@@ -1281,11 +1281,20 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       const dedupeKey = String(o.dedupeKey ?? `sim-${side}-${symbol}-${body.tradingDate}-${Date.now()}`);
       if (!symbol || quantity <= 0 || price <= 0) continue;
       try {
-        const [intent] = await db.insert(orderIntents).values({
-          userId: admin.id, symbol, name, side, orderType: "limit", quantity, price,
-          amount: quantity * price, status: "filled", executionOrigin: "local_node", dedupeKey,
-        }).onConflictDoNothing().returning();
-        if (intent) accepted.push(intent.id);
+        // 기존 pending_confirmation 주문이 있으면 filled로 업데이트
+        const existing = (await db.select().from(orderIntents).where(and(eq(orderIntents.userId, admin.id), eq(orderIntents.dedupeKey, dedupeKey))).limit(1))[0];
+        if (existing) {
+          if (existing.status !== "filled") {
+            await db.update(orderIntents).set({ status: "filled", price, quantity, amount: quantity * price }).where(eq(orderIntents.id, existing.id));
+          }
+          accepted.push(existing.id);
+        } else {
+          const [intent] = await db.insert(orderIntents).values({
+            userId: admin.id, symbol, name, side, orderType: "limit", quantity, price,
+            amount: quantity * price, status: "filled", executionOrigin: "local_node", dedupeKey,
+          }).onConflictDoNothing().returning();
+          if (intent) accepted.push(intent.id);
+        }
       } catch { /* 중복 무시 */ }
     }
 
