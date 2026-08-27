@@ -133,16 +133,16 @@ export function OneClickBacktest() {
   return (
     <div className="flex flex-col gap-5 p-4">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-white">전략 자동 생성</h1>
-          <p className="mt-1 text-xs text-slate-400">
-            버튼 하나로 매매 조건식을 자동 생성하고, 실제 과거 데이터로 수익성을 검증합니다. 좋은 결과를 채택해서 발전시키세요.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Timeframe selector */}
-          <div className="flex rounded-lg border border-slate-700 bg-slate-800/50 p-0.5">
+      <div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-lg sm:text-xl font-bold text-white">전략 자동 생성</h1>
+            <p className="mt-1 text-[11px] sm:text-xs text-slate-400">
+              보조지표 23종을 조합하여 50개 전략을 자동 생성하고, 과거 데이터로 수익성을 검증합니다.
+            </p>
+          </div>
+          {/* Desktop timeframe - hidden on mobile */}
+          <div className="hidden sm:flex rounded-lg border border-slate-700 bg-slate-800/50 p-0.5">
             {([["daily", "일봉"], ["weekly", "주봉"], ["monthly", "월봉"]] as const).map(([tf, label]) => (
               <button
                 key={tf}
@@ -157,33 +157,56 @@ export function OneClickBacktest() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Mobile controls row */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
+          {/* Mobile timeframe */}
+          <div className="flex sm:hidden rounded-lg border border-slate-700 bg-slate-800/50 p-0.5">
+            {([["daily", "일"], ["weekly", "주"], ["monthly", "월"]] as const).map(([tf, label]) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf as "daily" | "weekly" | "monthly")}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${
+                  timeframe === tf
+                    ? "bg-teal-500/20 text-teal-300"
+                    : "text-slate-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {/* 손절/익절 설정 */}
-          <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1">
-            <span className="text-[10px] text-rose-400">손절</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1">
+            <span className="text-[10px] text-rose-400">SL</span>
             <input type="number" min={0.5} max={20} step={0.5} value={stopLoss}
               onChange={e => setStopLoss(Math.max(0.5, Math.min(20, Number(e.target.value) || 3)))}
-              className="w-12 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-[10px] text-white" />
+              className="w-10 sm:w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-center text-[10px] text-white" />
             <span className="text-[10px] text-slate-500">%</span>
-            <span className="text-[10px] text-emerald-400 ml-1">익절</span>
+            <span className="text-[10px] text-emerald-400 ml-0.5">TP</span>
             <input type="number" min={0.5} max={50} step={0.5} value={takeProfit}
               onChange={e => setTakeProfit(Math.max(0.5, Math.min(50, Number(e.target.value) || 5)))}
-              className="w-12 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-[10px] text-white" />
+              className="w-10 sm:w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-center text-[10px] text-white" />
             <span className="text-[10px] text-slate-500">%</span>
           </div>
+          {/* 생성 버튼 */}
           <button
             onClick={handleRun}
             disabled={runMutation.isPending}
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-teal-500/20 transition hover:shadow-teal-500/40 disabled:opacity-50"
+            className="flex items-center gap-1.5 sm:gap-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 px-4 sm:px-6 py-2.5 sm:py-3 text-xs sm:text-sm font-bold text-white shadow-lg shadow-teal-500/20 transition hover:shadow-teal-500/40 active:scale-95 disabled:opacity-50"
           >
             {runMutation.isPending ? (
               <>
-                <Zap className="animate-pulse" size={18} />
-                전략 생성 + 수익성 검증 중...
+                <Zap className="animate-pulse" size={16} />
+                <span className="hidden sm:inline">50개 전략 생성 + 검증 중...</span>
+                <span className="sm:hidden">생성 중...</span>
               </>
             ) : (
               <>
-                <Dices size={18} />
-                전략 자동 생성
+                <Dices size={16} />
+                <span className="hidden sm:inline">전략 자동 생성 (50개)</span>
+                <span className="sm:hidden">자동 생성</span>
               </>
             )}
           </button>
@@ -612,11 +635,16 @@ function ResultCard({
           {/* Condition rules */}
           <details className="mt-4">
             <summary className="cursor-pointer text-xs font-medium text-slate-400 hover:text-white">
-              조건식 상세 규칙 보기
+              조건식 상세 ({countRules(item.root)}개 조건)
             </summary>
-            <pre className="mt-2 max-h-60 overflow-auto rounded-lg bg-slate-950 p-3 text-[10px] text-slate-300">
-              {JSON.stringify(item.root, null, 2)}
-            </pre>
+            <div className="mt-2 space-y-1.5 rounded-lg bg-slate-950 p-3">
+              {formatRulesKorean(item.root).map((desc, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-[11px]">
+                  <span className="shrink-0 rounded bg-teal-500/10 px-1.5 py-0.5 text-[9px] font-bold text-teal-300">{idx + 1}</span>
+                  <span className="text-slate-300">{desc}</span>
+                </div>
+              ))}
+            </div>
           </details>
 
           {/* Evolution results */}
@@ -649,4 +677,81 @@ function countRules(root: unknown): number {
   if (node.type && !node.children) return 1;
   if (Array.isArray(node.children)) return node.children.reduce<number>((sum, child) => sum + countRules(child), 0);
   return 0;
+}
+
+// ─── 조건식 한글 표시 유틸 ─────────────────────────────────────
+
+const RULE_TYPE_LABELS: Record<string, string> = {
+  macd_rising: "MACD 히스토그램 상승",
+  macd_level: "MACD 히스토그램 수준",
+  macd_histogram: "MACD 히스토그램",
+  ma_position: "이동평균선 배열",
+  high_return: "고저 변동률",
+  new_high: "신고가",
+  turnover: "거래대금",
+  rsi: "RSI",
+  bollinger: "볼린저밴드",
+  stochastic: "스토캐스틱 %K",
+  atr_percent: "ATR 변동성",
+  volume_ratio: "거래량 비율",
+  close_change: "종가 등락률",
+  gap_percent: "시가 갭",
+  gap_up: "갭상승",
+  gap_down: "갭하락",
+  intrabar_position: "봉내 종가위치",
+  turnover_count: "거래대금 연속",
+  volume_ratio_count: "거래량 급증 횟수",
+  bullish_candle_count: "양봉 횟수",
+  bearish_candle_count: "음봉 횟수",
+  price_range: "가격 범위",
+  disparity: "이격도",
+  envelope: "엔벨로프",
+  williams_r: "Williams %R",
+  cci: "CCI",
+  obv: "OBV 추세",
+  turnover_ma: "거래대금 이평 비율",
+};
+
+function formatRulesKorean(root: unknown): string[] {
+  const descriptions: string[] = [];
+  collectRuleDescriptions(root, descriptions);
+  return descriptions;
+}
+
+function collectRuleDescriptions(node: unknown, out: string[]) {
+  if (!node || typeof node !== "object") return;
+  const n = node as Record<string, unknown>;
+
+  // Leaf rule
+  if (n.type && typeof n.type === "string" && !n.children) {
+    const config = (n.config ?? {}) as Record<string, unknown>;
+    const label = RULE_TYPE_LABELS[n.type] ?? n.type;
+    const comparator = config.comparator ?? "";
+    const parts: string[] = [label];
+
+    if (config.period) parts.push(`${config.period}일`);
+    if (config.periods) parts.push(`[${config.periods}]일선`);
+    if (config.days) parts.push(`${config.days}봉`);
+    if (config.lookback) parts.push(`${config.lookback}봉`);
+    if (config.threshold !== undefined) parts.push(`${config.threshold}`);
+    if (config.minPercent !== undefined) parts.push(`${config.minPercent}%`);
+    if (config.count) parts.push(`${config.count}회`);
+    if (config.fast) parts.push(`(${config.fast},${config.slow},${config.signal})`);
+    if (config.deviation) parts.push(`${config.deviation}σ`);
+    if (config.percent) parts.push(`${config.percent}%`);
+    if (config.band) parts.push(`${config.band === "upper" ? "상단" : config.band === "lower" ? "하단" : "중앙"}`);
+    if (comparator) parts.push(`${comparator}`);
+
+    out.push(parts.join(" "));
+    return;
+  }
+
+  // Group node
+  if (Array.isArray(n.children)) {
+    const logic = n.logic ?? "AND";
+    if (logic === "NOT") out.push(`[NOT 조건]`);
+    for (const child of n.children) {
+      collectRuleDescriptions(child, out);
+    }
+  }
 }

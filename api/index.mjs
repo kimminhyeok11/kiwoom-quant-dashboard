@@ -8412,29 +8412,45 @@ function aggregateDailyBars(bars, timeframe) {
   return Array.from(grouped.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 var ALL_RULE_TYPES = [
+  // 추세/모멘텀 지표
   "macd_rising",
+  "macd_histogram",
   "ma_position",
   "high_return",
-  "turnover",
+  "close_change",
+  "disparity",
+  // 과매수/과매도 지표
   "rsi",
   "bollinger",
   "stochastic",
+  "williams_r",
+  "cci",
+  "envelope",
+  // 변동성 지표
   "atr_percent",
-  "volume_ratio",
-  "close_change",
   "gap_percent",
-  "intrabar_position"
+  "gap_up",
+  "gap_down",
+  "intrabar_position",
+  // 거래량/거래대금 지표
+  "volume_ratio",
+  "turnover",
+  "obv",
+  "turnover_ma",
+  // 캔들 패턴
+  "bullish_candle_count",
+  "bearish_candle_count"
 ];
 var oneClickBacktestRouter = router({
   /**
    * 원클릭 실행: 랜덤 조건식 생성 → 랜덤 종목/기간 → 백테스트 → 결과 반환
    */
   run: publicProcedure.input(z19.object({
-    /** 생성할 조건식 수 (기본 10) */
-    count: z19.number().int().min(1).max(50).default(10),
+    /** 생성할 조건식 수 (기본 50) */
+    count: z19.number().int().min(1).max(100).default(50),
     /** 규칙 수 범위 */
-    minRules: z19.number().int().min(2).max(10).default(3),
-    maxRules: z19.number().int().min(3).max(12).default(6),
+    minRules: z19.number().int().min(2).max(15).default(6),
+    maxRules: z19.number().int().min(3).max(20).default(10),
     /** 보유 기간 (일) */
     holdingDays: z19.number().int().min(1).max(60).default(5),
     /** 수수료율 */
@@ -8450,9 +8466,9 @@ var oneClickBacktestRouter = router({
     /** 익절 비율 (%) */
     takeProfitPercent: z19.number().min(0).max(50).default(5)
   }).optional()).mutation(async ({ input }) => {
-    const count3 = input?.count ?? 10;
-    const minRules = input?.minRules ?? 3;
-    const maxRules = input?.maxRules ?? 6;
+    const count3 = input?.count ?? 50;
+    const minRules = input?.minRules ?? 6;
+    const maxRules = input?.maxRules ?? 10;
     const holdingDays = input?.holdingDays ?? 5;
     const feeRate = (input?.feeRate ?? 3e-4) + (input?.slippageBps ?? 8) / 1e4;
     const minScore = input?.minScore ?? 50;
@@ -8524,7 +8540,7 @@ var oneClickBacktestRouter = router({
       populationSize: count3,
       minRules,
       maxRules,
-      maxDepth: 2,
+      maxDepth: 3,
       allowedRuleTypes: ALL_RULE_TYPES,
       requireUniqueRuleTypes: true
     };

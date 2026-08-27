@@ -53,9 +53,16 @@ function aggregateDailyBars(bars: DailyBar[], timeframe: "daily" | "weekly" | "m
 }
 
 const ALL_RULE_TYPES: ConditionRule["type"][] = [
-  "macd_rising", "ma_position", "high_return", "turnover",
-  "rsi", "bollinger", "stochastic", "atr_percent",
-  "volume_ratio", "close_change", "gap_percent", "intrabar_position",
+  // 추세/모멘텀 지표
+  "macd_rising", "macd_histogram", "ma_position", "high_return", "close_change", "disparity",
+  // 과매수/과매도 지표
+  "rsi", "bollinger", "stochastic", "williams_r", "cci", "envelope",
+  // 변동성 지표
+  "atr_percent", "gap_percent", "gap_up", "gap_down", "intrabar_position",
+  // 거래량/거래대금 지표
+  "volume_ratio", "turnover", "obv", "turnover_ma",
+  // 캔들 패턴
+  "bullish_candle_count", "bearish_candle_count",
 ];
 
 export const oneClickBacktestRouter = router({
@@ -64,11 +71,11 @@ export const oneClickBacktestRouter = router({
    */
   run: publicProcedure
     .input(z.object({
-      /** 생성할 조건식 수 (기본 10) */
-      count: z.number().int().min(1).max(50).default(10),
+      /** 생성할 조건식 수 (기본 50) */
+      count: z.number().int().min(1).max(100).default(50),
       /** 규칙 수 범위 */
-      minRules: z.number().int().min(2).max(10).default(3),
-      maxRules: z.number().int().min(3).max(12).default(6),
+      minRules: z.number().int().min(2).max(15).default(6),
+      maxRules: z.number().int().min(3).max(20).default(10),
       /** 보유 기간 (일) */
       holdingDays: z.number().int().min(1).max(60).default(5),
       /** 수수료율 */
@@ -85,9 +92,9 @@ export const oneClickBacktestRouter = router({
       takeProfitPercent: z.number().min(0).max(50).default(5),
     }).optional())
     .mutation(async ({ input }) => {
-      const count = input?.count ?? 10;
-      const minRules = input?.minRules ?? 3;
-      const maxRules = input?.maxRules ?? 6;
+      const count = input?.count ?? 50;
+      const minRules = input?.minRules ?? 6;
+      const maxRules = input?.maxRules ?? 10;
       const holdingDays = input?.holdingDays ?? 5;
       const feeRate = (input?.feeRate ?? 0.0003) + (input?.slippageBps ?? 8) / 10000;
       const minScore = input?.minScore ?? 50;
@@ -182,7 +189,7 @@ export const oneClickBacktestRouter = router({
         populationSize: count,
         minRules,
         maxRules,
-        maxDepth: 2,
+        maxDepth: 3,
         allowedRuleTypes: ALL_RULE_TYPES,
         requireUniqueRuleTypes: true,
       };
