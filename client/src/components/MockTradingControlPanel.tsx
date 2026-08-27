@@ -52,6 +52,9 @@ export function MockTradingControlPanel() {
         <PositionsSummarySection />
       </div>
 
+      {/* Active Strategies */}
+      <ActiveStrategiesSection />
+
       {/* Feedback History */}
       <FeedbackHistorySection />
     </div>
@@ -616,6 +619,63 @@ function PerformanceSummarySection() {
 
 // ═══════════════════════════════════════════════════════════════
 // 피드백 루프 이력
+// ═══════════════════════════════════════════════════════════════
+// 활성 전략 목록 (다중 전략 동시 운용)
+// ═══════════════════════════════════════════════════════════════
+
+function ActiveStrategiesSection() {
+  const activePolicies = trpc.mockTrading.activePolicies.useQuery(undefined, { refetchInterval: 15_000 });
+  const pauseMutation = trpc.mockTrading.pausePolicy.useMutation({
+    onSuccess: (data) => { toast.success(data.message); activePolicies.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const resumeMutation = trpc.mockTrading.resumePolicy.useMutation({
+    onSuccess: (data) => { toast.success(data.message); activePolicies.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const policies = activePolicies.data?.policies ?? [];
+
+  if (!policies.length) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Shield size={16} className="text-violet-400" />
+          <h3 className="text-sm font-bold text-white">활성 전략 ({policies.length}개)</h3>
+        </div>
+        <span className="text-[10px] text-slate-500">동시 운용 중</span>
+      </div>
+
+      <div className="space-y-2">
+        {policies.map(p => (
+          <div key={p.id} className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-900/30 px-3 sm:px-4 py-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-300">v{p.version}</span>
+                <span className="text-xs font-medium text-white truncate">
+                  {p.totalCapital.toLocaleString()}원 · {p.maxConcurrentPositions}종목
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] text-slate-500">
+                SL {p.stopLossPercent}% · TP {p.takeProfitPercent}% · {p.positionSizingMode === "half_kelly" ? "Half Kelly" : p.positionSizingMode === "kelly" ? "Kelly" : p.positionSizingMode === "quarter_kelly" ? "Quarter Kelly" : `고정 ${p.positionSizingMode}`}
+              </p>
+            </div>
+            <button
+              onClick={() => { if (window.confirm(`전략 v${p.version}을 일시정지합니까?`)) pauseMutation.mutate({ policyId: p.id }); }}
+              disabled={pauseMutation.isPending}
+              className="shrink-0 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 active:scale-95 disabled:opacity-50"
+            >
+              정지
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 
 function FeedbackHistorySection() {

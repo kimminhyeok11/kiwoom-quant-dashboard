@@ -261,12 +261,7 @@ export const mockTradingRouter = router({
       const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
       if (!admin) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "시스템 관리자 계정이 필요합니다." });
 
-      // Supersede any existing active policy
-      const [current] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.status, "active")).orderBy(desc(autoTradePolicies.version)).limit(1);
-      if (current) {
-        await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq(autoTradePolicies.id, current.id));
-      }
-
+      // 복수 전략 동시 운용 허용 — 기존 active 정책은 유지
       // userId 스코핑으로 최대 version 조회 (unique constraint 충돌 방지)
       const [latestForUser] = await db.select({ version: autoTradePolicies.version })
         .from(autoTradePolicies)
@@ -1032,6 +1027,140 @@ export const mockTradingRouter = router({
       await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["사용자 취소"] }).where(eq(orderIntents.id, input.id));
 
       return { id: input.id, message: `${intent.name} 매도 주문이 취소되었습니다.` };
+    }),
+
+  /**
+   * 활성 전략 목록 조회 (다중 전략 동시 운용)
+   */
+  activePolicies: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+    const policies = await db.select().from(autoTradePolicies)
+      .where(eq(autoTradePolicies.status, "active"))
+      .orderBy(desc(autoTradePolicies.createdAt))
+      .limit(20);
+
+    return {
+      policies: policies.map(p => ({
+        id: p.id,
+        version: p.version,
+        totalCapital: p.totalCapital,
+        maxConcurrentPositions: p.maxConcurrentPositions,
+        stopLossPercent: Number(p.stopLossPercent),
+        takeProfitPercent: Number(p.takeProfitPercent),
+        dailyLossLimitPercent: Number(p.dailyLossLimitPercent),
+        entryTiming: p.entryTiming ?? "prev_close_next_open",
+        positionSizingMode: p.positionSizingMode ?? "half_kelly",
+        createdAt: p.createdAt,
+      })),
+      count: policies.length,
+    };
+  }),
+
+  /**
+   * 전략별 성과 조회 (정책 ID 기반)
+   */
+  policyPerformance: publicProcedure
+    .input(z.object({ policyId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const orders = await db.select({
+        side: orderIntents.side,
+        symbol: orderIntents.symbol,
+        name: orderIntents.name,
+        quantity: orderIntents.quantity,
+        price: orderIntents.price,
+        status: orderIntents.status,
+        createdAt: orderIntents.createdAt,
+      }).from(orderIntents)
+        .where(and(eq(orderIntents.autoPolicyId, input.policyId), eq(orderIntents.status, "filled")))
+        .orderBy(desc(orderIntents.createdAt))
+        .limit(200);
+
+      const buys = orders.filter(o => o.side === "buy");
+      const sells = orders.filter(o => o.side === "sell");
+
+      // 라운드트립 구성
+      const bySymbol = new Map<string, { buys: typeof orders; sells: typeof orders }>();
+      for (const o of orders) {
+        const entry = bySymbol.get(o.symbol) ?? { buys: [], sells: [] };
+        if (o.side === "buy") entry.buys.push(o);
+        else entry.sells.push(o);
+        bySymbol.set(o.symbol, entry);
+      }
+
+      let realizedPnl = 0;
+      let winCount = 0;
+      let lossCount = 0;
+      const positions: Array<{ symbol: string; name: string; quantity: number; avgBuyPrice: number }> = [];
+
+      for (const [symbol, { buys: symBuys, sells: symSells }] of Array.from(bySymbol.entries())) {
+        const totalCost = symBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+        const totalQty = symBuys.reduce((s, b) => s + b.quantity, 0);
+        const avgBuy = totalQty > 0 ? totalCost / totalQty : 0;
+        const soldQty = symSells.reduce((s, s2) => s + s2.quantity, 0);
+
+        for (const sell of symSells) {
+          const pnl = (sell.price - avgBuy) * sell.quantity;
+          realizedPnl += pnl;
+          if (pnl >= 0) winCount++; else lossCount++;
+        }
+
+        const remainingQty = totalQty - soldQty;
+        if (remainingQty > 0) {
+          positions.push({ symbol, name: symBuys[0]?.name ?? symbol, quantity: remainingQty, avgBuyPrice: Math.round(avgBuy) });
+        }
+      }
+
+      const roundTrips = winCount + lossCount;
+
+      return {
+        policyId: input.policyId,
+        totalOrders: orders.length,
+        buyCount: buys.length,
+        sellCount: sells.length,
+        realizedPnl: Math.round(realizedPnl),
+        winCount,
+        lossCount,
+        winRate: roundTrips > 0 ? Number(((winCount / roundTrips) * 100).toFixed(1)) : null,
+        openPositions: positions,
+        capitalDeployed: buys.reduce((s, b) => s + b.price * b.quantity, 0),
+      };
+    }),
+
+  /**
+   * 전략 일시정지 (status를 paused로)
+   */
+  pausePolicy: publicProcedure
+    .input(z.object({ policyId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [policy] = await db.select().from(autoTradePolicies).where(and(eq(autoTradePolicies.id, input.policyId), eq(autoTradePolicies.status, "active"))).limit(1);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "활성 정책을 찾을 수 없습니다." });
+
+      await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq(autoTradePolicies.id, input.policyId));
+      return { id: input.policyId, message: `정책 v${policy.version}이 일시정지되었습니다.` };
+    }),
+
+  /**
+   * 전략 재개 (superseded → active로)
+   */
+  resumePolicy: publicProcedure
+    .input(z.object({ policyId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [policy] = await db.select().from(autoTradePolicies).where(and(eq(autoTradePolicies.id, input.policyId), eq(autoTradePolicies.status, "superseded"))).limit(1);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "재개할 정책을 찾을 수 없습니다." });
+
+      await db.update(autoTradePolicies).set({ status: "active" }).where(eq(autoTradePolicies.id, input.policyId));
+      return { id: input.policyId, message: `정책 v${policy.version}이 다시 활성화되었습니다.` };
     }),
 
   /**

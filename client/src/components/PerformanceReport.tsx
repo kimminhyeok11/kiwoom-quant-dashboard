@@ -7,6 +7,7 @@
  * - 슬리피지 분석
  */
 
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   TrendingUp,
@@ -23,12 +24,20 @@ import {
 } from "lucide-react";
 
 export function PerformanceReport() {
+  const [selectedPolicyId, setSelectedPolicyId] = useState<number | null>(null);
   const summary = trpc.performanceTracker.summary.useQuery(undefined, { staleTime: 30_000, refetchInterval: 60_000 });
   const comparison = trpc.performanceTracker.backtestVsActual.useQuery(undefined, { staleTime: 60_000 });
   const slippage = trpc.performanceTracker.slippageAnalysis.useQuery(undefined, { staleTime: 60_000 });
+  const activePolicies = trpc.mockTrading.activePolicies.useQuery(undefined, { staleTime: 30_000 });
+  const policyPerf = trpc.mockTrading.policyPerformance.useQuery(
+    { policyId: selectedPolicyId! },
+    { enabled: Boolean(selectedPolicyId), staleTime: 30_000 }
+  );
 
   const s = summary.data;
   const hasData = s && s.roundTripCount > 0;
+  const policies = activePolicies.data?.policies ?? [];
+  const pp = policyPerf.data;
 
   return (
     <div className="flex flex-col gap-5 p-4">
@@ -39,6 +48,41 @@ export function PerformanceReport() {
           백테스트 예측과 실제 체결 결과를 비교하여 전략의 실전 신뢰도를 측정합니다.
         </p>
       </div>
+
+      {/* 전략별 필터 */}
+      {policies.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setSelectedPolicyId(null)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+              !selectedPolicyId ? "bg-teal-500/20 text-teal-300 border border-teal-500/40" : "bg-slate-800 text-slate-400 border border-slate-700 hover:text-white"
+            }`}
+          >
+            전체
+          </button>
+          {policies.map(p => (
+            <button
+              key={p.id}
+              onClick={() => setSelectedPolicyId(p.id)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                selectedPolicyId === p.id ? "bg-violet-500/20 text-violet-300 border border-violet-500/40" : "bg-slate-800 text-slate-400 border border-slate-700 hover:text-white"
+              }`}
+            >
+              v{p.version} · {(p.totalCapital / 10000).toFixed(0)}만
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 전략별 성과 (선택 시) */}
+      {selectedPolicyId && pp && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard icon={Target} label="승률" value={pp.winRate !== null ? `${pp.winRate}%` : "—"} detail={`${pp.winCount}승 ${pp.lossCount}패`} tone={pp.winRate !== null && pp.winRate >= 50 ? "green" : "red"} />
+          <MetricCard icon={Activity} label="실현 손익" value={`${pp.realizedPnl >= 0 ? "+" : ""}${pp.realizedPnl.toLocaleString()}원`} detail={`매수 ${pp.buyCount} · 매도 ${pp.sellCount}건`} tone={pp.realizedPnl >= 0 ? "green" : "red"} />
+          <MetricCard icon={TrendingUp} label="투입 자본" value={`${(pp.capitalDeployed / 10000).toFixed(0)}만원`} detail={`총 ${pp.totalOrders}건 체결`} tone="green" />
+          <MetricCard icon={Scale} label="오픈 포지션" value={`${pp.openPositions.length}종목`} detail={pp.openPositions.map(p => p.symbol).join(", ") || "없음"} tone="yellow" />
+        </div>
+      )}
 
       {/* 데이터 없을 때 */}
       {!hasData && !summary.isLoading && (

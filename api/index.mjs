@@ -8957,10 +8957,6 @@ var mockTradingRouter = router({
     const { users: users2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
     const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
     if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uC2DC\uC2A4\uD15C \uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
-    const [current] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.version)).limit(1);
-    if (current) {
-      await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq32(autoTradePolicies.id, current.id));
-    }
     const [latestForUser] = await db.select({ version: autoTradePolicies.version }).from(autoTradePolicies).where(eq32(autoTradePolicies.userId, admin.id)).orderBy(desc26(autoTradePolicies.version)).limit(1);
     const version = (latestForUser?.version ?? 0) + 1;
     const [policy] = await db.insert(autoTradePolicies).values({
@@ -9592,6 +9588,109 @@ var mockTradingRouter = router({
     if (!intent) throw new TRPCError18({ code: "NOT_FOUND", message: "\uCDE8\uC18C\uD560 \uB9E4\uB3C4 \uC8FC\uBB38\uC744 \uCC3E\uC744 \uC218 \uC5C6\uAC70\uB098 \uC774\uBBF8 \uC2E4\uD589\uB418\uC5C8\uC2B5\uB2C8\uB2E4." });
     await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["\uC0AC\uC6A9\uC790 \uCDE8\uC18C"] }).where(eq32(orderIntents.id, input.id));
     return { id: input.id, message: `${intent.name} \uB9E4\uB3C4 \uC8FC\uBB38\uC774 \uCDE8\uC18C\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
+   * 활성 전략 목록 조회 (다중 전략 동시 운용)
+   */
+  activePolicies: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const policies = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.status, "active")).orderBy(desc26(autoTradePolicies.createdAt)).limit(20);
+    return {
+      policies: policies.map((p) => ({
+        id: p.id,
+        version: p.version,
+        totalCapital: p.totalCapital,
+        maxConcurrentPositions: p.maxConcurrentPositions,
+        stopLossPercent: Number(p.stopLossPercent),
+        takeProfitPercent: Number(p.takeProfitPercent),
+        dailyLossLimitPercent: Number(p.dailyLossLimitPercent),
+        entryTiming: p.entryTiming ?? "prev_close_next_open",
+        positionSizingMode: p.positionSizingMode ?? "half_kelly",
+        createdAt: p.createdAt
+      })),
+      count: policies.length
+    };
+  }),
+  /**
+   * 전략별 성과 조회 (정책 ID 기반)
+   */
+  policyPerformance: publicProcedure.input(z20.object({ policyId: z20.number().int().positive() })).query(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const orders = await db.select({
+      side: orderIntents.side,
+      symbol: orderIntents.symbol,
+      name: orderIntents.name,
+      quantity: orderIntents.quantity,
+      price: orderIntents.price,
+      status: orderIntents.status,
+      createdAt: orderIntents.createdAt
+    }).from(orderIntents).where(and22(eq32(orderIntents.autoPolicyId, input.policyId), eq32(orderIntents.status, "filled"))).orderBy(desc26(orderIntents.createdAt)).limit(200);
+    const buys = orders.filter((o) => o.side === "buy");
+    const sells = orders.filter((o) => o.side === "sell");
+    const bySymbol = /* @__PURE__ */ new Map();
+    for (const o of orders) {
+      const entry = bySymbol.get(o.symbol) ?? { buys: [], sells: [] };
+      if (o.side === "buy") entry.buys.push(o);
+      else entry.sells.push(o);
+      bySymbol.set(o.symbol, entry);
+    }
+    let realizedPnl = 0;
+    let winCount = 0;
+    let lossCount = 0;
+    const positions = [];
+    for (const [symbol, { buys: symBuys, sells: symSells }] of Array.from(bySymbol.entries())) {
+      const totalCost = symBuys.reduce((s, b) => s + b.price * b.quantity, 0);
+      const totalQty = symBuys.reduce((s, b) => s + b.quantity, 0);
+      const avgBuy = totalQty > 0 ? totalCost / totalQty : 0;
+      const soldQty = symSells.reduce((s, s2) => s + s2.quantity, 0);
+      for (const sell of symSells) {
+        const pnl = (sell.price - avgBuy) * sell.quantity;
+        realizedPnl += pnl;
+        if (pnl >= 0) winCount++;
+        else lossCount++;
+      }
+      const remainingQty = totalQty - soldQty;
+      if (remainingQty > 0) {
+        positions.push({ symbol, name: symBuys[0]?.name ?? symbol, quantity: remainingQty, avgBuyPrice: Math.round(avgBuy) });
+      }
+    }
+    const roundTrips = winCount + lossCount;
+    return {
+      policyId: input.policyId,
+      totalOrders: orders.length,
+      buyCount: buys.length,
+      sellCount: sells.length,
+      realizedPnl: Math.round(realizedPnl),
+      winCount,
+      lossCount,
+      winRate: roundTrips > 0 ? Number((winCount / roundTrips * 100).toFixed(1)) : null,
+      openPositions: positions,
+      capitalDeployed: buys.reduce((s, b) => s + b.price * b.quantity, 0)
+    };
+  }),
+  /**
+   * 전략 일시정지 (status를 paused로)
+   */
+  pausePolicy: publicProcedure.input(z20.object({ policyId: z20.number().int().positive() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [policy] = await db.select().from(autoTradePolicies).where(and22(eq32(autoTradePolicies.id, input.policyId), eq32(autoTradePolicies.status, "active"))).limit(1);
+    if (!policy) throw new TRPCError18({ code: "NOT_FOUND", message: "\uD65C\uC131 \uC815\uCC45\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    await db.update(autoTradePolicies).set({ status: "superseded" }).where(eq32(autoTradePolicies.id, input.policyId));
+    return { id: input.policyId, message: `\uC815\uCC45 v${policy.version}\uC774 \uC77C\uC2DC\uC815\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
+   * 전략 재개 (superseded → active로)
+   */
+  resumePolicy: publicProcedure.input(z20.object({ policyId: z20.number().int().positive() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [policy] = await db.select().from(autoTradePolicies).where(and22(eq32(autoTradePolicies.id, input.policyId), eq32(autoTradePolicies.status, "superseded"))).limit(1);
+    if (!policy) throw new TRPCError18({ code: "NOT_FOUND", message: "\uC7AC\uAC1C\uD560 \uC815\uCC45\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    await db.update(autoTradePolicies).set({ status: "active" }).where(eq32(autoTradePolicies.id, input.policyId));
+    return { id: input.policyId, message: `\uC815\uCC45 v${policy.version}\uC774 \uB2E4\uC2DC \uD65C\uC131\uD654\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
   }),
   /**
    * 자동매매 프로필 전체 상태 (컨트롤 패널 메인 조회)
