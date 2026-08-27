@@ -512,6 +512,8 @@ export const oneClickBacktestRouter = router({
       holdingDays: z.number().int().min(1).max(60).default(5),
       stopLossPercent: z.number().min(0).max(20).default(3),
       takeProfitPercent: z.number().min(0).max(50).default(5),
+      /** 전략 프리셋 ID — 지정 시 검증 결과를 DB에 저장하고 lifecycleStatus 자동 전환 */
+      presetId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -583,22 +585,50 @@ export const oneClickBacktestRouter = router({
       const stdDev = Math.sqrt(mean(returns.map(r => (r - mean(returns)) ** 2)));
       const positiveRate = returns.filter(r => r > 0).length / Math.max(1, returns.length) * 100;
 
+      const statistics = {
+        meanReturn: Number(mean(returns).toFixed(2)),
+        medianReturn: Number(median.toFixed(2)),
+        stdDevReturn: Number(stdDev.toFixed(2)),
+        bestReturn: Number(Math.max(...returns).toFixed(2)),
+        worstReturn: Number(Math.min(...returns).toFixed(2)),
+        positiveRate: Number(positiveRate.toFixed(1)),
+        meanWinRate: Number(mean(winRates).toFixed(1)),
+        meanDrawdown: Number(mean(drawdowns).toFixed(2)),
+        worstDrawdown: Number(Math.min(...drawdowns).toFixed(2)),
+        meanTrades: Number(mean(trades).toFixed(1)),
+        totalTrades: trades.reduce((s, v) => s + v, 0),
+      };
+
+      // presetId 지정 시: 검증 결과 DB 저장 + lifecycleStatus 자동 전환
+      let autoTransition: string | null = null;
+      if (input.presetId) {
+        const [preset] = await db.select().from(strategyPresets).where(eq(strategyPresets.id, input.presetId)).limit(1);
+        if (preset) {
+          // 자동 판정 기준: 양의 기대수익(meanReturn > 0) + 수익 확률 50% 이상
+          const passed = statistics.meanReturn > 0 && statistics.positiveRate >= 50;
+          autoTransition = passed ? "survivor" : "rejected";
+
+          const currentScoring = (preset.scoringJson ?? {}) as Record<string, unknown>;
+          const updatedScoring = {
+            ...currentScoring,
+            lifecycleStatus: autoTransition,
+            lifecycleUpdatedAt: new Date().toISOString(),
+            validationResult: {
+              completedAt: new Date().toISOString(),
+              iterations: iterationResults.length,
+              passed,
+              statistics,
+            },
+          };
+          await db.update(strategyPresets).set({ scoringJson: updatedScoring }).where(eq(strategyPresets.id, input.presetId));
+        }
+      }
+
       return {
         iterations: iterationResults.length,
         symbols: symbols.length,
-        statistics: {
-          meanReturn: Number(mean(returns).toFixed(2)),
-          medianReturn: Number(median.toFixed(2)),
-          stdDevReturn: Number(stdDev.toFixed(2)),
-          bestReturn: Number(Math.max(...returns).toFixed(2)),
-          worstReturn: Number(Math.min(...returns).toFixed(2)),
-          positiveRate: Number(positiveRate.toFixed(1)),
-          meanWinRate: Number(mean(winRates).toFixed(1)),
-          meanDrawdown: Number(mean(drawdowns).toFixed(2)),
-          worstDrawdown: Number(Math.min(...drawdowns).toFixed(2)),
-          meanTrades: Number(mean(trades).toFixed(1)),
-          totalTrades: trades.reduce((s, v) => s + v, 0),
-        },
+        statistics,
+        autoTransition,
         distribution: {
           returns: iterationResults.map(r => r.avgReturn),
           drawdowns: iterationResults.map(r => r.maxDrawdown),

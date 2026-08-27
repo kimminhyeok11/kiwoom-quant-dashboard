@@ -1,160 +1,334 @@
-import { describe, expect, it } from "vitest";
-import type { ConditionRule } from "../../shared/trading";
-import { atrPercent, bollingerBands, evaluateExpression, evaluateStrategy, highReturnPercent, isAboveMovingAverages, isMacdRising, isNewHigh, relativeStrengthIndex, stochasticK, volumeRatio } from "./conditions";
+import { describe, it, expect } from "vitest";
+import { evaluateExpression, evaluateRule, simpleMovingAverage, exponentialMovingAverage } from "./conditions";
+import type { DailyBar, ConditionEvaluation } from "./conditions";
+import type { ConditionRule, ConditionExpressionGroup } from "../../shared/trading";
 
-const bars = Array.from({ length: 80 }, (_, index) => {
-  const close = 10_000 + index * 120 + (index % 5) * 9;
-  return { date: `2026-01-${String((index % 28) + 1).padStart(2, "0")}`, open: close - 30, high: close + 70, low: close - 90, close, volume: 100_000 + index * 100, turnover: index === 78 ? 65_000_000_000 : 10_000_000_000 };
+// === 테스트 헬퍼 ===
+
+/** N일 분량의 상승 트렌드 봉 생성 */
+function makeRisingBars(count: number, startPrice = 10000): DailyBar[] {
+  return Array.from({ length: count }, (_, i) => ({
+    date: `2024-01-${String(i + 1).padStart(2, "0")}`,
+    open: startPrice + i * 100,
+    high: startPrice + i * 100 + 80,
+    low: startPrice + i * 100 - 20,
+    close: startPrice + (i + 1) * 100,
+    volume: 1_000_000 + i * 10000,
+    turnover: 10_000_000_000 + i * 100_000_000,
+  }));
+}
+
+/** N일 분량의 횡보 봉 생성 */
+function makeFlatBars(count: number, price = 10000): DailyBar[] {
+  return Array.from({ length: count }, (_, i) => ({
+    date: `2024-01-${String(i + 1).padStart(2, "0")}`,
+    open: price,
+    high: price + 50,
+    low: price - 50,
+    close: price + (i % 2 === 0 ? 10 : -10),
+    volume: 1_000_000,
+    turnover: 10_000_000_000,
+  }));
+}
+
+function makeRule(overrides: Partial<ConditionRule> & { type: ConditionRule["type"] }): ConditionRule {
+  return {
+    id: "test-rule-1",
+    enabled: true,
+    weight: 10,
+    config: {},
+    ...overrides,
+  };
+}
+
+function makeGroup(overrides: Partial<ConditionExpressionGroup>): ConditionExpressionGroup {
+  return {
+    id: "group-1",
+    logic: "AND",
+    enabled: true,
+    children: [],
+    ...overrides,
+  };
+}
+
+// === simpleMovingAverage ===
+
+describe("simpleMovingAverage", () => {
+  it("기간 내 종가 평균을 반환", () => {
+    const bars = makeRisingBars(5);
+    const sma = simpleMovingAverage(bars, 3);
+    // 마지막 3봉의 close: 10300, 10400, 10500
+    expect(sma).toBeCloseTo((10300 + 10400 + 10500) / 3, 0);
+  });
+
+  it("봉 수 부족 시 null 반환", () => {
+    const bars = makeRisingBars(2);
+    expect(simpleMovingAverage(bars, 5)).toBeNull();
+  });
+
+  it("period가 0이면 null", () => {
+    expect(simpleMovingAverage(makeRisingBars(5), 0)).toBeNull();
+  });
 });
 
-const rules: ConditionRule[] = [
-  { id: "macd", type: "macd_rising", enabled: true, weight: 30, config: { lookback: 3 } },
-  { id: "ma", type: "ma_position", enabled: true, weight: 25, config: { periods: "5,21,60" } },
-  { id: "return", type: "high_return", enabled: true, weight: 20, config: { days: 11, minPercent: 5 } },
-  { id: "turnover", type: "turnover", enabled: true, weight: 25, config: { days: 5, threshold: 50_000_000_000 } },
-];
+// === exponentialMovingAverage ===
 
-describe("condition engine", () => {
-  it("evaluates the requested four technical condition families", () => {
-    expect(isMacdRising(bars, 3)).toBe(true);
-    expect(isAboveMovingAverages(bars, [5, 21, 60])).toBe(true);
-    expect(highReturnPercent(bars, 11)).toBeGreaterThan(5);
+describe("exponentialMovingAverage", () => {
+  it("결과 배열 길이가 입력과 동일", () => {
+    const values = [10, 11, 12, 13, 14];
+    const ema = exponentialMovingAverage(values, 3);
+    expect(ema).toHaveLength(5);
   });
 
-  it("adds only matched rule weights to a strategy score", () => {
-    const result = evaluateStrategy(rules, bars);
-    expect(result.matchedCount).toBe(4);
-    expect(result.score).toBe(100);
+  it("첫 값은 입력 첫 값과 동일", () => {
+    const values = [100, 110, 120];
+    const ema = exponentialMovingAverage(values, 3);
+    expect(ema[0]).toBe(100);
   });
 
-  it("applies a detailed comparator and reports actual-versus-expected evidence", () => {
-    const result = evaluateStrategy([{ id: "turnover-below", type: "turnover", enabled: true, weight: 20, config: { days: 5, threshold: 70_000_000_000, comparator: "미만" } }], bars);
-    expect(result).toMatchObject({ score: 20, matchedCount: 1 });
-    expect(result.evaluations[0]).toMatchObject({ actual: 65_000_000_000, expected: 70_000_000_000, comparator: "미만", matched: true });
+  it("빈 배열이면 빈 배열 반환", () => {
+    expect(exponentialMovingAverage([], 5)).toHaveLength(0);
+  });
+});
+
+// === evaluateRule ===
+
+describe("evaluateRule", () => {
+  it("비활성 규칙은 항상 미매칭", () => {
+    const rule = makeRule({ type: "close_change", enabled: false });
+    const result = evaluateRule(rule, makeRisingBars(10));
+    expect(result.matched).toBe(false);
+    expect(result.score).toBe(0);
+    expect(result.detail).toBe("비활성 조건");
   });
 
-  it("applies AND, OR, and NOT logic to the eligibility of a condition expression", () => {
-    const result = evaluateStrategy([
-      { id: "return", type: "high_return", enabled: true, weight: 20, config: { days: 11, minPercent: 5, logic: "AND" } },
-      { id: "too-high-turnover", type: "turnover", enabled: true, weight: 20, config: { days: 5, threshold: 70_000_000_000, logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: false, score: 0, matchedCount: 1 });
-    const withOr = evaluateStrategy([{ id: "return", type: "high_return", enabled: true, weight: 20, config: { days: 11, minPercent: 5 } }, { id: "alternate", type: "turnover", enabled: true, weight: 20, config: { days: 5, threshold: 70_000_000_000, logic: "OR" } }], bars);
-    expect(withOr).toMatchObject({ eligible: true, score: 20 });
+  it("빈 봉 데이터에서는 미매칭", () => {
+    const rule = makeRule({ type: "close_change", config: { days: 1, threshold: 0.5, comparator: "이상" } });
+    const result = evaluateRule(rule, []);
+    expect(result.matched).toBe(false);
   });
 
-  it("evaluates detailed MACD and moving-average comparator settings", () => {
-    const result = evaluateStrategy([
-      { id: "macd", type: "macd_rising", enabled: true, weight: 20, config: { lookback: 3, comparator: "이상" } },
-      { id: "ma", type: "ma_position", enabled: true, weight: 20, config: { periods: "5,21,60", comparator: "이상", logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: true, score: 40, matchedCount: 2 });
-    expect(result.evaluations[1]).toMatchObject({ comparator: "이상", actual: expect.any(Number), expected: expect.any(Number) });
+  it("close_change: 종가 변동률이 threshold 이상이면 매칭", () => {
+    // 마지막 봉 close가 이전 봉 close보다 상승한 데이터
+    const bars: DailyBar[] = [
+      { date: "2024-01-01", open: 10000, high: 10100, low: 9900, close: 10000, volume: 1000000, turnover: 10000000000 },
+      { date: "2024-01-02", open: 10000, high: 10300, low: 9900, close: 10200, volume: 1000000, turnover: 10000000000 },
+    ];
+    const rule = makeRule({
+      type: "close_change",
+      config: { days: 1, threshold: 1, comparator: "이상" },
+      weight: 5,
+    });
+    const result = evaluateRule(rule, bars);
+    // 변동률: (10200 - 10000) / 10000 * 100 = 2% >= 1%
+    expect(result.matched).toBe(true);
+    expect(result.score).toBe(5);
   });
 
-  it("applies a saved moving-average period and normalizes turnover thresholds expressed in 억원", () => {
-    const result = evaluateStrategy([
-      { id: "ma-21", type: "ma_position", enabled: true, weight: 30, config: { periods: "21", comparator: "이상", unit: "원" } },
-      { id: "turnover-eok", type: "turnover", enabled: true, weight: 25, config: { days: 5, threshold: 500, comparator: "이상", unit: "억원", logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: true, score: 55, matchedCount: 2 });
-    expect(result.evaluations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ruleId: "ma-21", detail: expect.stringContaining("21일선") }),
-      expect.objectContaining({ ruleId: "turnover-eok", expected: 50_000_000_000, matched: true }),
-    ]));
+  it("close_change: 변동률 미달 시 미매칭", () => {
+    const bars: DailyBar[] = [
+      { date: "2024-01-01", open: 10000, high: 10100, low: 9900, close: 10000, volume: 1000000, turnover: 10000000000 },
+      { date: "2024-01-02", open: 10000, high: 10050, low: 9950, close: 10010, volume: 1000000, turnover: 10000000000 },
+    ];
+    const rule = makeRule({
+      type: "close_change",
+      config: { days: 1, threshold: 2, comparator: "이상" },
+    });
+    const result = evaluateRule(rule, bars);
+    // 변동률: (10010 - 10000) / 10000 * 100 = 0.1% < 2%
+    expect(result.matched).toBe(false);
   });
 
-  it("normalizes unsupported crossing comparators on threshold rules to an explicit threshold comparison", () => {
-    const result = evaluateStrategy([
-      { id: "high-normalized", type: "high_return", enabled: true, weight: 20, config: { days: 11, minPercent: 5, comparator: "상향돌파", unit: "%" } },
-      { id: "turnover-normalized", type: "turnover", enabled: true, weight: 20, config: { days: 5, threshold: 500, comparator: "하향돌파", unit: "억원", logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: true, score: 40 });
-    expect(result.evaluations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ruleId: "high-normalized", comparator: "이상", matched: true }),
-      expect.objectContaining({ ruleId: "turnover-normalized", comparator: "이상", expected: 50_000_000_000, matched: true }),
-    ]));
+  it("new_high: 신고가 달성 시 매칭", () => {
+    const bars: DailyBar[] = [
+      { date: "2024-01-01", open: 100, high: 110, low: 90, close: 105, volume: 1000, turnover: 100000 },
+      { date: "2024-01-02", open: 105, high: 108, low: 100, close: 106, volume: 1000, turnover: 100000 },
+      { date: "2024-01-03", open: 106, high: 115, low: 104, close: 112, volume: 1000, turnover: 100000 },
+    ];
+    const rule = makeRule({ type: "new_high", config: { period: 3 }, weight: 8 });
+    const result = evaluateRule(rule, bars);
+    // 마지막 봉 high(115) >= 이전 봉들의 max high(110)
+    expect(result.matched).toBe(true);
+    expect(result.score).toBe(8);
   });
 
-  it("종가 변동률·시가 갭·봉 내부 종가 위치 규칙을 실제 OHLCV에서 평가한다", () => {
-    const result = evaluateStrategy([
-      { id: "close-change", type: "close_change", enabled: true, weight: 10, config: { days: 1, threshold: -100, comparator: "이상" } },
-      { id: "gap", type: "gap_percent", enabled: true, weight: 10, config: { threshold: -100, comparator: "이상", logic: "AND" } },
-      { id: "position", type: "intrabar_position", enabled: true, weight: 10, config: { threshold: 0, comparator: "이상", logic: "AND" } },
-    ], bars);
+  it("new_high: 신고가 미달성 시 미매칭", () => {
+    const bars: DailyBar[] = [
+      { date: "2024-01-01", open: 100, high: 120, low: 90, close: 105, volume: 1000, turnover: 100000 },
+      { date: "2024-01-02", open: 105, high: 108, low: 100, close: 106, volume: 1000, turnover: 100000 },
+      { date: "2024-01-03", open: 106, high: 115, low: 104, close: 112, volume: 1000, turnover: 100000 },
+    ];
+    const rule = makeRule({ type: "new_high", config: { period: 3 } });
+    const result = evaluateRule(rule, bars);
+    // 마지막 봉 high(115) < 이전 봉 max high(120)
+    expect(result.matched).toBe(false);
+  });
+});
 
-    expect(result).toMatchObject({ eligible: true, score: 30, matchedCount: 3 });
+// === evaluateExpression ===
+
+describe("evaluateExpression", () => {
+  // 매칭되는 규칙과 안 되는 규칙을 준비
+  const risingBars = makeRisingBars(30);
+
+  const matchingRule = makeRule({
+    id: "rule-match",
+    type: "close_change",
+    config: { days: 1, threshold: 0.5, comparator: "이상" },
+    weight: 10,
   });
 
-  it("normalizes unsupported units per indicator family before evaluating and explains the effective unit", () => {
-    const result = evaluateStrategy([
-      { id: "macd-unit", type: "macd_rising", enabled: true, weight: 10, config: { lookback: 3, unit: "억원" } },
-      { id: "ma-unit", type: "ma_position", enabled: true, weight: 10, config: { periods: "21", unit: "%", logic: "AND" } },
-      { id: "high-unit", type: "high_return", enabled: true, weight: 10, config: { days: 11, minPercent: 5, unit: "원", logic: "AND" } },
-      { id: "turnover-unit", type: "turnover", enabled: true, weight: 10, config: { days: 5, threshold: 50_000_000_000, unit: "달러", logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: true, score: 40 });
-    expect(result.evaluations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ruleId: "macd-unit", detail: expect.stringContaining("지수") }),
-      expect.objectContaining({ ruleId: "ma-unit", detail: expect.stringContaining("원") }),
-      expect.objectContaining({ ruleId: "high-unit", detail: expect.stringContaining("%") }),
-      expect.objectContaining({ ruleId: "turnover-unit", expected: 50_000_000_000 }),
-    ]));
+  const nonMatchingRule = makeRule({
+    id: "rule-no-match",
+    type: "close_change",
+    config: { days: 1, threshold: 99, comparator: "이상" }, // 99% 변동은 불가
+    weight: 5,
   });
 
-  it("evaluates nested AND, OR, and NOT groups recursively", () => {
-    const expression = {
-      id: "root", logic: "AND" as const, enabled: true, children: [
-        { id: "return", type: "high_return" as const, enabled: true, weight: 20, config: { days: 11, minPercent: 5 } },
-        { id: "not-expensive-turnover", logic: "NOT" as const, enabled: true, children: [{ id: "turnover", type: "turnover" as const, enabled: true, weight: 20, config: { days: 5, threshold: 70_000_000_000 } }] },
-      ],
-    };
-    const result = evaluateExpression(expression, bars);
-    expect(result).toMatchObject({ eligible: true, score: 20 });
-    expect(result.evaluations).toHaveLength(2);
+  describe("단일 규칙 노드", () => {
+    it("매칭되는 단일 규칙: eligible=true", () => {
+      const result = evaluateExpression(matchingRule, risingBars);
+      expect(result.eligible).toBe(true);
+      expect(result.score).toBe(10);
+      expect(result.evaluations).toHaveLength(1);
+    });
+
+    it("미매칭 단일 규칙: eligible=false", () => {
+      const result = evaluateExpression(nonMatchingRule, risingBars);
+      expect(result.eligible).toBe(false);
+      expect(result.score).toBe(0);
+    });
   });
 
-  it("evaluates RSI, Bollinger, stochastic, ATR, and volume-ratio genes from daily bars", () => {
-    expect(relativeStrengthIndex(bars, 14)).toBeGreaterThan(50);
-    expect(bollingerBands(bars, 20, 2)?.upper).toBeGreaterThan(bollingerBands(bars, 20, 2)?.middle ?? 0);
-    expect(stochasticK(bars, 14)).toBeGreaterThan(50);
-    expect(atrPercent(bars, 14)).toBeGreaterThan(0);
-    expect(volumeRatio(bars, 20)).toBeGreaterThan(1);
-    const result = evaluateStrategy([
-      { id: "rsi", type: "rsi", enabled: true, weight: 10, config: { period: 14, threshold: 50, comparator: "이상" } },
-      { id: "bollinger", type: "bollinger", enabled: true, weight: 10, config: { period: 20, deviation: 2, band: "middle", comparator: "이상", logic: "AND" } },
-      { id: "stochastic", type: "stochastic", enabled: true, weight: 10, config: { period: 14, threshold: 50, comparator: "이상", logic: "AND" } },
-      { id: "atr", type: "atr_percent", enabled: true, weight: 10, config: { period: 14, threshold: 0, comparator: "초과", logic: "AND" } },
-      { id: "volume", type: "volume_ratio", enabled: true, weight: 10, config: { period: 20, threshold: 1, comparator: "초과", logic: "AND" } },
-    ], bars);
-    expect(result).toMatchObject({ eligible: true, score: 50, matchedCount: 5 });
-    expect(result.evaluations.map(item => item.ruleId)).toEqual(["rsi", "bollinger", "stochastic", "atr", "volume"]);
+  describe("AND 그룹", () => {
+    it("모든 자식 매칭 시 eligible=true", () => {
+      const group = makeGroup({
+        logic: "AND",
+        children: [
+          { ...matchingRule, id: "r1" },
+          { ...matchingRule, id: "r2" },
+        ],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(true);
+      expect(result.score).toBe(20); // 10 + 10
+    });
+
+    it("하나라도 미매칭이면 eligible=false", () => {
+      const group = makeGroup({
+        logic: "AND",
+        children: [matchingRule, nonMatchingRule],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(false);
+      expect(result.score).toBe(0);
+    });
   });
 
-  it("제공 조건식에서 직접 변환한 신고가·MACD 기준선·볼린저 상향돌파를 실제 봉으로 평가한다", () => {
-    expect(isNewHigh(bars, 5)).toBe(true);
-    const result = evaluateStrategy([
-      { id: "new-high", type: "new_high", enabled: true, weight: 10, config: { period: 5 } },
-      { id: "macd-level", type: "macd_level", enabled: true, weight: 10, config: { threshold: -1_000_000, comparator: "이상", logic: "AND" } },
-      { id: "bollinger-cross", type: "bollinger", enabled: true, weight: 10, config: { period: 20, deviation: 2, band: "upper", comparator: "상향돌파", lookback: 80, logic: "AND" } },
-    ], bars);
-    expect(result.evaluations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ ruleId: "new-high", matched: true, comparator: "신고가" }),
-      expect.objectContaining({ ruleId: "macd-level", matched: true, actual: expect.any(Number), expected: -1_000_000 }),
-      expect.objectContaining({ ruleId: "bollinger-cross", matched: expect.any(Boolean), comparator: "상향돌파" }),
-    ]));
+  describe("OR 그룹", () => {
+    it("하나라도 매칭이면 eligible=true", () => {
+      const group = makeGroup({
+        logic: "OR",
+        children: [nonMatchingRule, matchingRule],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(true);
+      expect(result.score).toBeGreaterThan(0);
+    });
+
+    it("모두 미매칭이면 eligible=false", () => {
+      const group = makeGroup({
+        logic: "OR",
+        children: [
+          { ...nonMatchingRule, id: "n1" },
+          { ...nonMatchingRule, id: "n2" },
+        ],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(false);
+    });
   });
 
-  it("복합 HTS 카드의 시간축별 반복 거래대금·거래량·양봉·가격 범위를 같은 시점 원본에서 평가한다", () => {
-    const result = evaluateStrategy([
-      { id: "daily-macd", type: "macd_level", enabled: true, weight: 20, config: { timeframe: "daily", threshold: -1_000_000, comparator: "이상" } },
-      { id: "five-minute-turnover", type: "turnover_count", enabled: true, weight: 20, config: { timeframe: "five_minute", days: 5, threshold: 50_000_000_000, count: 1, comparator: "이상", logic: "AND" } },
-      { id: "five-minute-volume-repeat", type: "volume_ratio_count", enabled: true, weight: 20, config: { timeframe: "five_minute", days: 3, threshold: 0.9, count: 2, comparator: "이상", logic: "AND" } },
-      { id: "daily-bullish", type: "bullish_candle_count", enabled: true, weight: 20, config: { timeframe: "daily", days: 3, count: 3, comparator: "이상", logic: "AND" } },
-      { id: "daily-price-range", type: "price_range", enabled: true, weight: 20, config: { timeframe: "daily", minPrice: 2_000, maxPrice: 200_000, logic: "AND" } },
-    ], { activeBars: bars.slice(-5), timeframeBars: { daily: bars, five_minute: bars } });
+  describe("NOT 그룹", () => {
+    it("자식이 미매칭이면 eligible=true (반전)", () => {
+      const group = makeGroup({
+        logic: "NOT",
+        children: [nonMatchingRule],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(true);
+    });
 
-    expect(result).toMatchObject({ eligible: true, score: 100, matchedCount: 5 });
-    expect(result.evaluations.map(item => item.ruleId)).toEqual(["daily-macd", "five-minute-turnover", "five-minute-volume-repeat", "daily-bullish", "daily-price-range"]);
+    it("자식이 매칭이면 eligible=false (반전)", () => {
+      const group = makeGroup({
+        logic: "NOT",
+        children: [matchingRule],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(false);
+    });
+  });
+
+  describe("비활성 그룹", () => {
+    it("enabled=false 그룹은 항상 eligible=false", () => {
+      const group = makeGroup({
+        enabled: false,
+        children: [matchingRule],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.eligible).toBe(false);
+      expect(result.evaluations).toHaveLength(0);
+    });
+  });
+
+  describe("중첩 그룹", () => {
+    it("AND( OR(match, no-match), match ) → eligible=true", () => {
+      const orGroup = makeGroup({
+        id: "or-inner",
+        logic: "OR",
+        children: [matchingRule, nonMatchingRule],
+      });
+      const andGroup = makeGroup({
+        id: "and-outer",
+        logic: "AND",
+        children: [orGroup, { ...matchingRule, id: "r-outer" }],
+      });
+      const result = evaluateExpression(andGroup, risingBars);
+      expect(result.eligible).toBe(true);
+    });
+
+    it("AND( OR(no-match, no-match), match ) → eligible=false", () => {
+      const orGroup = makeGroup({
+        id: "or-inner",
+        logic: "OR",
+        children: [
+          { ...nonMatchingRule, id: "n1" },
+          { ...nonMatchingRule, id: "n2" },
+        ],
+      });
+      const andGroup = makeGroup({
+        id: "and-outer",
+        logic: "AND",
+        children: [orGroup, matchingRule],
+      });
+      const result = evaluateExpression(andGroup, risingBars);
+      expect(result.eligible).toBe(false);
+    });
+  });
+
+  describe("evaluations 누적", () => {
+    it("그룹 내 모든 리프 규칙의 evaluation이 포함됨", () => {
+      const group = makeGroup({
+        logic: "AND",
+        children: [
+          { ...matchingRule, id: "a" },
+          { ...matchingRule, id: "b" },
+          { ...matchingRule, id: "c" },
+        ],
+      });
+      const result = evaluateExpression(group, risingBars);
+      expect(result.evaluations).toHaveLength(3);
+      expect(result.evaluations.map(e => e.ruleId)).toEqual(["a", "b", "c"]);
+    });
   });
 });

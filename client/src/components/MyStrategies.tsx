@@ -39,7 +39,15 @@ export function MyStrategies() {
     onError: (err) => toast.error(err.message),
   });
   const validateMutation = trpc.oneClickBacktest.randomValidation.useMutation({
-    onSuccess: () => toast.success("50회 랜덤 검증 완료"),
+    onSuccess: (data) => {
+      const transitionLabels: Record<string, string> = { survivor: "생존", rejected: "탈락" };
+      if (data.autoTransition) {
+        toast.success(`${data.iterations}회 검증 완료 → "${transitionLabels[data.autoTransition] ?? data.autoTransition}" 자동 전환`);
+      } else {
+        toast.success(`${data.iterations}회 랜덤 검증 완료`);
+      }
+      adopted.refetch();
+    },
     onError: (err) => toast.error(err.message),
   });
   const statusMutation = trpc.oneClickBacktest.updateStrategyStatus.useMutation({
@@ -145,7 +153,11 @@ export function MyStrategies() {
                       <button
                         onClick={() => {
                           if (!s.root) { toast.error("조건식 데이터 없음"); return; }
-                          validateMutation.mutate({ root: s.root, minimumScore: s.minimumScore, iterations: 50 });
+                          // 검증 시작 시 자동으로 "testing" 상태로 전환 (UI 피드백)
+                          if (s.status !== "testing") {
+                            statusMutation.mutate({ presetId: s.id, status: "testing" });
+                          }
+                          validateMutation.mutate({ root: s.root, minimumScore: s.minimumScore, iterations: 50, presetId: s.id });
                         }}
                         disabled={validateMutation.isPending}
                         className="flex items-center gap-1.5 rounded-lg bg-violet-500/10 px-3 py-2 text-[11px] font-medium text-violet-300 hover:bg-violet-500/20 active:scale-95 disabled:opacity-50"
