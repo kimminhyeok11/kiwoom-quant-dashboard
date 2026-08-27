@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 import { orderIntents, strategyPresets, tradingProfiles } from "../../drizzle/schema";
 import { KiwoomClient } from "../kiwoom/client";
@@ -115,9 +115,11 @@ export const quantRouter = router({
       autoTradeEnabled: profile.autoTradeEnabled,
       requireConfirmation: profile.requireConfirmation,
     } as const;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const todayOrders = await db.select().from(orderIntents).where(eq(orderIntents.userId, ctx.user.id));
-    const confirmedToday = todayOrders.filter(order => order.confirmedAt && order.confirmedAt >= today && ["confirmed", "submitted", "filled"].includes(order.status)).length;
+    const todayKST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+    const todayStartKST = new Date(todayKST + "T00:00:00+09:00");
+    const todayOrders = await db.select({ confirmedAt: orderIntents.confirmedAt, status: orderIntents.status })
+      .from(orderIntents).where(and(eq(orderIntents.userId, ctx.user.id), gte(orderIntents.createdAt, todayStartKST)));
+    const confirmedToday = todayOrders.filter(order => order.confirmedAt && ["confirmed", "submitted", "filled"].includes(order.status)).length;
     const risk = evaluateOrderRisk({ symbol: input.symbol, name: input.name, side: input.side, quantity: input.quantity, price: input.price }, settings, confirmedToday, new KiwoomClient().getStatus().mayTransmitOrders);
     const [created] = await db.insert(orderIntents).values({
       userId: ctx.user.id, presetId: input.presetId, symbol: input.symbol, name: input.name, side: input.side,

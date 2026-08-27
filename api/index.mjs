@@ -1522,7 +1522,7 @@ var feedbackLoop_exports = {};
 __export(feedbackLoop_exports, {
   feedbackLoopHandler: () => feedbackLoopHandler
 });
-import { and as and27, desc as desc30, eq as eq37, gte as gte6 } from "drizzle-orm";
+import { and as and27, desc as desc30, eq as eq37, gte as gte7 } from "drizzle-orm";
 function buildRoundTrips(trades) {
   const bySymbol = /* @__PURE__ */ new Map();
   for (const t2 of trades) {
@@ -1621,7 +1621,7 @@ async function feedbackLoopHandler(_req, res) {
     }).from(orderIntents).where(and27(
       eq37(orderIntents.executionOrigin, "local_node"),
       eq37(orderIntents.status, "filled"),
-      gte6(orderIntents.createdAt, thirtyDaysAgo)
+      gte7(orderIntents.createdAt, thirtyDaysAgo)
     )).orderBy(orderIntents.createdAt);
     const trades = filledOrders.map((o) => ({
       symbol: o.symbol,
@@ -1656,7 +1656,7 @@ async function feedbackLoopHandler(_req, res) {
     }).from(orderIntents).innerJoin(orderExecutions, eq37(orderExecutions.orderIntentId, orderIntents.id)).where(and27(
       eq37(orderIntents.executionOrigin, "local_node"),
       eq37(orderExecutions.executionStatus, "filled"),
-      gte6(orderIntents.createdAt, thirtyDaysAgo)
+      gte7(orderIntents.createdAt, thirtyDaysAgo)
     )).limit(200);
     const slippages = executions.filter((e) => e.plannedPrice > 0 && e.filledPrice && e.filledPrice > 0).map((e) => {
       const slipPct = (e.filledPrice - e.plannedPrice) / e.plannedPrice * 100;
@@ -2272,7 +2272,7 @@ var systemRouter = router({
 // server/routers/quant.ts
 init_schema();
 import { TRPCError as TRPCError2 } from "@trpc/server";
-import { and as and2, eq as eq3 } from "drizzle-orm";
+import { and as and2, eq as eq3, gte } from "drizzle-orm";
 import { z as z2 } from "zod";
 
 // server/quant/risk.ts
@@ -3418,10 +3418,10 @@ var quantRouter = router({
       autoTradeEnabled: profile.autoTradeEnabled,
       requireConfirmation: profile.requireConfirmation
     };
-    const today = /* @__PURE__ */ new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayOrders = await db.select().from(orderIntents).where(eq3(orderIntents.userId, ctx.user.id));
-    const confirmedToday = todayOrders.filter((order) => order.confirmedAt && order.confirmedAt >= today && ["confirmed", "submitted", "filled"].includes(order.status)).length;
+    const todayKST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
+    const todayStartKST = /* @__PURE__ */ new Date(todayKST + "T00:00:00+09:00");
+    const todayOrders = await db.select({ confirmedAt: orderIntents.confirmedAt, status: orderIntents.status }).from(orderIntents).where(and2(eq3(orderIntents.userId, ctx.user.id), gte(orderIntents.createdAt, todayStartKST)));
+    const confirmedToday = todayOrders.filter((order) => order.confirmedAt && ["confirmed", "submitted", "filled"].includes(order.status)).length;
     const risk = evaluateOrderRisk({ symbol: input.symbol, name: input.name, side: input.side, quantity: input.quantity, price: input.price }, settings, confirmedToday, new KiwoomClient().getStatus().mayTransmitOrders);
     const [created] = await db.insert(orderIntents).values({
       userId: ctx.user.id,
@@ -3776,7 +3776,7 @@ var tradingProfileRouter = router({
 init_schema();
 init_db();
 import { TRPCError as TRPCError6 } from "@trpc/server";
-import { and as and4, desc as desc4, eq as eq6, gte } from "drizzle-orm";
+import { and as and4, desc as desc4, eq as eq6, gte as gte2 } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z as z5 } from "zod";
 async function requireDb3() {
@@ -3839,7 +3839,7 @@ var ordersRouter = router({
     if (!intent || !profile) throw new TRPCError6({ code: "PRECONDITION_FAILED", message: "\uC8FC\uBB38 \uC758\uB3C4 \uB610\uB294 \uC2E4\uAC70\uB798 \uC548\uC804 \uC124\uC815\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
     const todayKST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const todayStartKST = /* @__PURE__ */ new Date(todayKST + "T00:00:00+09:00");
-    const todayOrdersAll = await db.select({ status: orderIntents.status, createdAt: orderIntents.createdAt }).from(orderIntents).where(and4(eq6(orderIntents.userId, ctx.user.id), gte(orderIntents.createdAt, todayStartKST)));
+    const todayOrdersAll = await db.select({ status: orderIntents.status, createdAt: orderIntents.createdAt }).from(orderIntents).where(and4(eq6(orderIntents.userId, ctx.user.id), gte2(orderIntents.createdAt, todayStartKST)));
     const confirmedToday = todayOrdersAll.filter((order) => ["confirmed", "submitted", "filled"].includes(order.status)).length;
     const client = new KiwoomClient();
     try {
@@ -3997,7 +3997,7 @@ function runDailyBacktest(input) {
       let gapBlocked = false;
       if (maxOpenGapPercent > 0 && entryTiming === "open" && pendingSignalIndex !== null) {
         const prevClose = input.bars[pendingSignalIndex].close;
-        const gapPercent2 = Math.abs((bar.open - prevClose) / prevClose) * 100;
+        const gapPercent2 = prevClose > 0 ? Math.abs((bar.open - prevClose) / prevClose) * 100 : 0;
         if (gapPercent2 > maxOpenGapPercent) {
           gapBlocked = true;
           gapSkipCount += 1;
@@ -4007,7 +4007,10 @@ function runDailyBacktest(input) {
         pendingEntryIndex = null;
         pendingSignalIndex = null;
       } else {
-        position = { entryIndex: index2, entryPrice: entryTiming === "open" ? bar.open : bar.close, entryDate: bar.date };
+        const entryPrice = entryTiming === "open" ? bar.open : bar.close;
+        if (entryPrice > 0) {
+          position = { entryIndex: index2, entryPrice, entryDate: bar.date };
+        }
         pendingEntryIndex = null;
         pendingSignalIndex = null;
       }
@@ -4017,8 +4020,9 @@ function runDailyBacktest(input) {
       const conditionInput = input.conditionContextAtIndex?.(index2, history) ?? history;
       const signal = input.expression ? evaluateExpression(input.expression, conditionInput) : evaluateStrategy(input.rules ?? [], conditionInput);
       if (signal.score >= input.minScore) {
-        if (entryDelayDays === 0) position = { entryIndex: index2, entryPrice: bar.close, entryDate: bar.date };
-        else {
+        if (entryDelayDays === 0) {
+          if (bar.close > 0) position = { entryIndex: index2, entryPrice: bar.close, entryDate: bar.date };
+        } else {
           pendingEntryIndex = index2 + entryDelayDays;
           pendingSignalIndex = index2;
         }
@@ -4110,12 +4114,14 @@ function runIntradayBacktest(input) {
       const signal = input.expression ? evaluateExpression(input.expression, conditionContext) : evaluateStrategy(input.rules ?? [], conditionContext);
       if (signal.score >= input.minScore) {
         const entryPrice = entryTiming === "open" && i + 1 < converted.length ? converted[i + 1].open : bar.close;
-        position = {
-          entryIndex: entryTiming === "open" ? i + 1 : i,
-          entryPrice,
-          entryTime: entryTiming === "open" && i + 1 < converted.length ? converted[i + 1].date : bar.date,
-          tradingDate: barDate
-        };
+        if (entryPrice > 0) {
+          position = {
+            entryIndex: entryTiming === "open" ? i + 1 : i,
+            entryPrice,
+            entryTime: entryTiming === "open" && i + 1 < converted.length ? converted[i + 1].date : bar.date,
+            tradingDate: barDate
+          };
+        }
       }
     }
   }
@@ -8246,7 +8252,7 @@ var survivalResearchRouter = router({
 
 // server/routers/chartData.ts
 import { z as z18 } from "zod";
-import { asc as asc6, and as and20, eq as eq30, desc as desc24, gte as gte2, lte, inArray as inArray7, sql as sql6 } from "drizzle-orm";
+import { asc as asc6, and as and20, eq as eq30, desc as desc24, gte as gte3, lte, inArray as inArray7, sql as sql6 } from "drizzle-orm";
 init_db();
 init_schema();
 import { TRPCError as TRPCError16 } from "@trpc/server";
@@ -8325,7 +8331,7 @@ var chartDataRouter = router({
       eq30(localResearchDailyBars.symbol, input.symbol),
       sql6`${localResearchDailyBars.adjustmentBasis}::text = 'adjusted'`
     ];
-    if (input.startDate) conditions.push(gte2(localResearchDailyBars.date, input.startDate));
+    if (input.startDate) conditions.push(gte3(localResearchDailyBars.date, input.startDate));
     if (input.endDate) conditions.push(lte(localResearchDailyBars.date, input.endDate));
     const rows = await db.select({
       date: localResearchDailyBars.date,
@@ -8763,7 +8769,7 @@ function extractRulesFromRoot(root) {
 
 // server/routers/mockTrading.ts
 import { z as z20 } from "zod";
-import { and as and22, desc as desc26, eq as eq32, gte as gte4, inArray as inArray9 } from "drizzle-orm";
+import { and as and22, desc as desc26, eq as eq32, gte as gte5, inArray as inArray9 } from "drizzle-orm";
 import { TRPCError as TRPCError18 } from "@trpc/server";
 init_db();
 init_schema();
@@ -8880,7 +8886,7 @@ var mockTradingRouter = router({
     }).from(orderIntents).where(and22(
       eq32(orderIntents.executionOrigin, "local_node"),
       eq32(orderIntents.status, "filled"),
-      gte4(orderIntents.createdAt, todayStart)
+      gte5(orderIntents.createdAt, todayStart)
     ));
     const buyOrders = todayOrders.filter((o) => o.side === "buy");
     const sellOrders = todayOrders.filter((o) => o.side === "sell");
@@ -9018,7 +9024,7 @@ var mockTradingRouter = router({
     if (!policy) return { active: false, killSwitch: false, safetyTriggered: false, limits: null, todayStats: null };
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(/* @__PURE__ */ new Date());
     const todayStart = /* @__PURE__ */ new Date(today + "T00:00:00+09:00");
-    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status, symbol: orderIntents.symbol }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte4(orderIntents.createdAt, todayStart)));
+    const todayOrders = await db.select({ side: orderIntents.side, quantity: orderIntents.quantity, price: orderIntents.price, status: orderIntents.status, symbol: orderIntents.symbol }).from(orderIntents).where(and22(eq32(orderIntents.executionOrigin, "local_node"), eq32(orderIntents.status, "filled"), gte5(orderIntents.createdAt, todayStart)));
     const todaySells = todayOrders.filter((o) => o.side === "sell");
     let realizedPnl = 0;
     if (todaySells.length > 0) {
@@ -9284,7 +9290,7 @@ var mockTradingRouter = router({
     const recentFilled = await db.select({ side: orderIntents.side, price: orderIntents.price, quantity: orderIntents.quantity, symbol: orderIntents.symbol }).from(orderIntents).where(and22(
       eq32(orderIntents.executionOrigin, "local_node"),
       eq32(orderIntents.status, "filled"),
-      gte4(orderIntents.createdAt, thirtyDaysAgo)
+      gte5(orderIntents.createdAt, thirtyDaysAgo)
     ));
     const buys = recentFilled.filter((o) => o.side === "buy");
     const sells = recentFilled.filter((o) => o.side === "sell");
@@ -13162,7 +13168,7 @@ async function autonomousResearchHandler(req, res, options = {}) {
           const entries = eligibleSymbols.flatMap((symbol) => {
             const evaluation = evaluateExpression(candidate.rootGenomeJson, barsBySymbol[symbol]);
             const current = universeBySymbol.get(symbol);
-            if (!current || !evaluation.eligible || evaluation.score < candidate.minimumScore) return [];
+            if (!current || !evaluation.eligible || evaluation.score < candidate.minimumScore || current.price <= 0) return [];
             return [{ symbol, name: current.name, entryPrice: Math.round(current.price), entryAt: (/* @__PURE__ */ new Date()).toISOString(), evidence: { score: evaluation.score, matchedRuleCount: evaluation.evaluations.filter((item) => item.matched).length, details: evaluation.evaluations.filter((item) => item.matched).slice(0, 5).map((item) => item.detail) } }];
           });
           const simulation = { status: entries.length ? "tracking" : "not_entered", entries, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -13181,7 +13187,7 @@ async function autonomousResearchHandler(req, res, options = {}) {
           const entries = simulation.entries.map((entry) => {
             const latest = priceBySymbol.get(entry.symbol);
             if (!latest) return entry;
-            const returnPercent = (latest.price - entry.entryPrice) / entry.entryPrice * 100;
+            const returnPercent = entry.entryPrice > 0 ? (latest.price - entry.entryPrice) / entry.entryPrice * 100 : 0;
             return phase === "closing" ? { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: (/* @__PURE__ */ new Date()).toISOString(), returnPercent, exitPrice: Math.round(latest.price), exitAt: (/* @__PURE__ */ new Date()).toISOString() } : { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: (/* @__PURE__ */ new Date()).toISOString(), returnPercent };
           });
           const next = { status: phase === "closing" ? "closed" : simulation.status, entries, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };

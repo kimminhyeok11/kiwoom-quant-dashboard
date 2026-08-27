@@ -118,7 +118,7 @@ export async function autonomousResearchHandler(req: Request, res: Response, opt
           const entries: SimulationEntry[] = eligibleSymbols.flatMap(symbol => {
             const evaluation = evaluateExpression(candidate.rootGenomeJson as unknown as ConditionExpressionGroup, barsBySymbol[symbol]!);
             const current = universeBySymbol.get(symbol);
-            if (!current || !evaluation.eligible || evaluation.score < candidate.minimumScore) return [];
+            if (!current || !evaluation.eligible || evaluation.score < candidate.minimumScore || current.price <= 0) return [];
             return [{ symbol, name: current.name, entryPrice: Math.round(current.price), entryAt: new Date().toISOString(), evidence: { score: evaluation.score, matchedRuleCount: evaluation.evaluations.filter(item => item.matched).length, details: evaluation.evaluations.filter(item => item.matched).slice(0, 5).map(item => item.detail) } }];
           });
           const simulation: CandidateSimulation = { status: entries.length ? "tracking" : "not_entered", entries, updatedAt: new Date().toISOString() };
@@ -137,7 +137,7 @@ export async function autonomousResearchHandler(req: Request, res: Response, opt
           const entries = simulation.entries.map(entry => {
             const latest = priceBySymbol.get(entry.symbol);
             if (!latest) return entry;
-            const returnPercent = (latest.price - entry.entryPrice) / entry.entryPrice * 100;
+            const returnPercent = entry.entryPrice > 0 ? (latest.price - entry.entryPrice) / entry.entryPrice * 100 : 0;
             return phase === "closing" ? { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: new Date().toISOString(), returnPercent, exitPrice: Math.round(latest.price), exitAt: new Date().toISOString() } : { ...entry, lastPrice: Math.round(latest.price), lastObservedAt: new Date().toISOString(), returnPercent };
           });
           const next: CandidateSimulation = { status: phase === "closing" ? "closed" : simulation.status, entries, updatedAt: new Date().toISOString() };

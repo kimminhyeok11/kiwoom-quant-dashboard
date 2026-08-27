@@ -172,7 +172,7 @@ export function runDailyBacktest(input: {
       let gapBlocked = false;
       if (maxOpenGapPercent > 0 && entryTiming === "open" && pendingSignalIndex !== null) {
         const prevClose = input.bars[pendingSignalIndex].close;
-        const gapPercent = Math.abs((bar.open - prevClose) / prevClose) * 100;
+        const gapPercent = prevClose > 0 ? Math.abs((bar.open - prevClose) / prevClose) * 100 : 0;
         if (gapPercent > maxOpenGapPercent) {
           gapBlocked = true;
           gapSkipCount += 1;
@@ -182,7 +182,10 @@ export function runDailyBacktest(input: {
         pendingEntryIndex = null;
         pendingSignalIndex = null;
       } else {
-        position = { entryIndex: index, entryPrice: entryTiming === "open" ? bar.open : bar.close, entryDate: bar.date };
+        const entryPrice = entryTiming === "open" ? bar.open : bar.close;
+        if (entryPrice > 0) {
+          position = { entryIndex: index, entryPrice, entryDate: bar.date };
+        }
         pendingEntryIndex = null;
         pendingSignalIndex = null;
       }
@@ -194,7 +197,9 @@ export function runDailyBacktest(input: {
       const conditionInput = input.conditionContextAtIndex?.(index, history) ?? history;
       const signal = input.expression ? evaluateExpression(input.expression, conditionInput) : evaluateStrategy(input.rules ?? [], conditionInput);
       if (signal.score >= input.minScore) {
-        if (entryDelayDays === 0) position = { entryIndex: index, entryPrice: bar.close, entryDate: bar.date };
+        if (entryDelayDays === 0) {
+          if (bar.close > 0) position = { entryIndex: index, entryPrice: bar.close, entryDate: bar.date };
+        }
         else {
           pendingEntryIndex = index + entryDelayDays;
           pendingSignalIndex = index;
@@ -379,12 +384,14 @@ export function runIntradayBacktest(input: IntradayBacktestInput): IntradayBackt
         const entryPrice = entryTiming === "open" && i + 1 < converted.length
           ? converted[i + 1].open
           : bar.close;
-        position = {
-          entryIndex: entryTiming === "open" ? i + 1 : i,
-          entryPrice,
-          entryTime: entryTiming === "open" && i + 1 < converted.length ? converted[i + 1].date : bar.date,
-          tradingDate: barDate,
-        };
+        if (entryPrice > 0) {
+          position = {
+            entryIndex: entryTiming === "open" ? i + 1 : i,
+            entryPrice,
+            entryTime: entryTiming === "open" && i + 1 < converted.length ? converted[i + 1].date : bar.date,
+            tradingDate: barDate,
+          };
+        }
       }
     }
   }
