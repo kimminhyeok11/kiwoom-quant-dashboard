@@ -106,7 +106,11 @@ export function MobileLiveMonitor() {
       <div className="mt-4 flex items-center gap-3">
         {/* 시작/중지 토글 */}
         <button
-          onClick={() => toggleMutation.mutate({ enabled: !isActive })}
+          onClick={() => {
+            const action = isActive ? "자동매매를 중지" : "자동매매를 시작";
+            if (!window.confirm(`${action}하시겠습니까?`)) return;
+            toggleMutation.mutate({ enabled: !isActive });
+          }}
           disabled={toggleMutation.isPending || (!hasPolicy && !isActive)}
           className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all active:scale-95 ${
             isActive
@@ -121,7 +125,10 @@ export function MobileLiveMonitor() {
         {/* 킬스위치 해제 (발동 시에만 표시) */}
         {(killSwitch || safetyTriggered) && (
           <button
-            onClick={() => resetKillMutation.mutate()}
+            onClick={() => {
+              if (!window.confirm("킬스위치를 해제하면 자동매매가 다시 활성화됩니다. 계속하시겠습니까?")) return;
+              resetKillMutation.mutate();
+            }}
             disabled={resetKillMutation.isPending}
             className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs font-bold text-amber-300 active:scale-95 disabled:opacity-50"
           >

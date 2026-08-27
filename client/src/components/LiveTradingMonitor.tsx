@@ -17,7 +17,7 @@ export function LiveTradingMonitor() {
   const recentOrders = trpc.mockTrading.recentOrders.useQuery({ limit: 5 }, { refetchInterval: 10_000 });
   const collector = trpc.network.collectorStatus.useQuery(undefined, { refetchInterval: 15_000 });
   const safety = trpc.mockTrading.safetyStatus.useQuery(undefined, { refetchInterval: 10_000 });
-  const stopMutation = trpc.mockTrading.stopAutoTrade.useMutation({
+  const stopMutation = trpc.mockTrading.toggleAutoTrade.useMutation({
     onSuccess: (data) => {
       toast.success(data.message);
       policy.refetch();
@@ -46,7 +46,10 @@ export function LiveTradingMonitor() {
         </div>
         {isActive && (
           <button
-            onClick={() => stopMutation.mutate()}
+            onClick={() => {
+              if (!window.confirm("자동매매를 일시정지하시겠습니까?")) return;
+              stopMutation.mutate({ enabled: false });
+            }}
             disabled={stopMutation.isPending}
             className="flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 transition hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
           >
@@ -65,7 +68,10 @@ export function LiveTradingMonitor() {
               <span className="text-xs font-bold text-rose-300">안전장치 발동 — 자동매매 중지됨</span>
             </div>
             <button
-              onClick={() => resetKillMutation.mutate()}
+              onClick={() => {
+                if (!window.confirm("킬스위치를 해제하시겠습니까?")) return;
+                resetKillMutation.mutate();
+              }}
               disabled={resetKillMutation.isPending}
               className="rounded-md bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300 hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
             >

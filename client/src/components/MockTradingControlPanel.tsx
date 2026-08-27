@@ -108,7 +108,11 @@ function MainControlSection() {
         <div className="flex items-center gap-3 sm:gap-4">
           {/* Big toggle button */}
           <button
-            onClick={() => toggleMutation.mutate({ enabled: !isEnabled })}
+            onClick={() => {
+              const action = isEnabled ? "자동매매를 중지" : "자동매매를 시작";
+              if (!window.confirm(`${action}하시겠습니까?`)) return;
+              toggleMutation.mutate({ enabled: !isEnabled });
+            }}
             disabled={toggleMutation.isPending || (!hasPolicy && !isEnabled)}
             className={`flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl transition-all active:scale-95 ${
               isEnabled
@@ -167,7 +171,10 @@ function MainControlSection() {
               </p>
             </div>
             <button
-              onClick={() => quickCreateMutation.mutate()}
+              onClick={() => {
+                if (!window.confirm("기본 정책(1000만원, SL3%, TP5%)을 생성하고 자동매매를 시작합니다. 계속하시겠습니까?")) return;
+                quickCreateMutation.mutate();
+              }}
               disabled={quickCreateMutation.isPending}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-teal-500 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-teal-600 active:scale-95 disabled:opacity-50 shrink-0"
             >
@@ -203,7 +210,10 @@ function MainControlSection() {
               </span>
             </div>
             <button
-              onClick={() => resetKillMutation.mutate()}
+              onClick={() => {
+                if (!window.confirm("킬스위치를 해제하면 자동매매가 다시 활성화됩니다. 계속하시겠습니까?")) return;
+                resetKillMutation.mutate();
+              }}
               disabled={resetKillMutation.isPending}
               className="shrink-0 rounded-md bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300 hover:bg-rose-500/20 active:scale-95 disabled:opacity-50"
             >

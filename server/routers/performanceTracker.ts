@@ -108,6 +108,10 @@ export const performanceTrackerRouter = router({
     // 실현 손익: 라운드트립 기반 (매도가 - 매수가) × 수량
     const realizedPnl = roundTrips.reduce((s, t) => s + (t.sellPrice - t.buyPrice) * t.quantity, 0);
 
+    // Profit Factor: 총수익합 / 총손실합 (올바른 공식)
+    const totalGrossProfit = roundTrips.filter(t => t.returnPercent > 0).reduce((s, t) => s + (t.sellPrice - t.buyPrice) * t.quantity, 0);
+    const totalGrossLoss = Math.abs(roundTrips.filter(t => t.returnPercent <= 0).reduce((s, t) => s + (t.sellPrice - t.buyPrice) * t.quantity, 0));
+
     return {
       totalOrders: allFilled.length,
       buyCount: buyOrders.length,
@@ -120,7 +124,7 @@ export const performanceTrackerRouter = router({
       avgReturn: Number(avgReturn.toFixed(2)),
       avgWin: Number(avgWin.toFixed(2)),
       avgLoss: Number(avgLoss.toFixed(2)),
-      profitFactor: avgLoss !== 0 ? Number(Math.abs(avgWin / avgLoss).toFixed(2)) : null,
+      profitFactor: totalGrossLoss > 0 ? Number((totalGrossProfit / totalGrossLoss).toFixed(2)) : null,
       recentTrades: roundTrips.slice(0, 20),
     };
   }),
