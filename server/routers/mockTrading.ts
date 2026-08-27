@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { publicProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
@@ -1027,6 +1027,80 @@ export const mockTradingRouter = router({
       await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["사용자 취소"] }).where(eq(orderIntents.id, input.id));
 
       return { id: input.id, message: `${intent.name} 매도 주문이 취소되었습니다.` };
+    }),
+
+  /**
+   * 전략(정책) 삭제 — active가 아닌 정책만 삭제 가능
+   */
+  deletePolicy: publicProcedure
+    .input(z.object({ policyId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [policy] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.id, input.policyId)).limit(1);
+      if (!policy) throw new TRPCError({ code: "NOT_FOUND", message: "정책을 찾을 수 없습니다." });
+      if (policy.status === "active") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "활성 정책은 삭제할 수 없습니다. 먼저 일시정지하세요." });
+
+      // 연관 주문도 정리 (해당 정책으로 생성된 주문 중 filled가 아닌 것)
+      await db.delete(autoTradePolicies).where(eq(autoTradePolicies.id, input.policyId));
+      return { id: input.policyId, message: `정책 v${policy.version}이 삭제되었습니다.` };
+    }),
+
+  /**
+   * 채택 전략(프리셋) 삭제
+   */
+  deletePreset: publicProcedure
+    .input(z.object({ presetId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const [preset] = await db.select().from(strategyPresets).where(eq(strategyPresets.id, input.presetId)).limit(1);
+      if (!preset) throw new TRPCError({ code: "NOT_FOUND", message: "전략을 찾을 수 없습니다." });
+
+      await db.delete(strategyPresets).where(eq(strategyPresets.id, input.presetId));
+      return { id: input.presetId, message: `"${preset.name}" 전략이 삭제되었습니다.` };
+    }),
+
+  /**
+   * 데이터 정리 — 오래된 positionSnapshots, 완료된 주문 이력 등 정리
+   * retainDays: 이 일수보다 오래된 데이터 삭제 (기본 30일)
+   */
+  cleanupOldData: publicProcedure
+    .input(z.object({ retainDays: z.number().int().min(7).max(365).default(30) }).optional())
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
+
+      const retainDays = input?.retainDays ?? 30;
+      const cutoff = new Date(Date.now() - retainDays * 24 * 60 * 60 * 1000);
+
+      // 오래된 positionSnapshots 삭제 (최근 스냅샷은 유지)
+      const deletedSnapshots = await db.delete(positionSnapshots).where(lt(positionSnapshots.capturedAt, cutoff)).returning({ id: positionSnapshots.id });
+
+      // 오래된 rejected/cancelled 주문 삭제
+      const deletedOrders = await db.delete(orderIntents).where(and(
+        lt(orderIntents.createdAt, cutoff),
+        inArray(orderIntents.status, ["rejected", "blocked"]),
+      )).returning({ id: orderIntents.id });
+
+      // 오래된 superseded 정책 삭제 (30일 넘은 것)
+      const deletedPolicies = await db.delete(autoTradePolicies).where(and(
+        eq(autoTradePolicies.status, "superseded"),
+        lt(autoTradePolicies.createdAt, cutoff),
+      )).returning({ id: autoTradePolicies.id });
+
+      return {
+        retainDays,
+        cutoffDate: cutoff.toISOString().slice(0, 10),
+        deleted: {
+          positionSnapshots: deletedSnapshots.length,
+          rejectedOrders: deletedOrders.length,
+          oldPolicies: deletedPolicies.length,
+        },
+        message: `${retainDays}일 이전 데이터 정리 완료: 스냅샷 ${deletedSnapshots.length}건, 거부 주문 ${deletedOrders.length}건, 종료 정책 ${deletedPolicies.length}건 삭제.`,
+      };
     }),
 
   /**

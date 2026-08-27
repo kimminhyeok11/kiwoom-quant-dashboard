@@ -9002,7 +9002,7 @@ function extractRulesFromRoot(root) {
 
 // server/routers/mockTrading.ts
 import { z as z20 } from "zod";
-import { and as and22, desc as desc26, eq as eq32, gte as gte5, inArray as inArray9 } from "drizzle-orm";
+import { and as and22, desc as desc26, eq as eq32, gte as gte5, inArray as inArray9, lt } from "drizzle-orm";
 import { TRPCError as TRPCError18 } from "@trpc/server";
 init_db();
 init_schema();
@@ -9821,6 +9821,58 @@ var mockTradingRouter = router({
     if (!intent) throw new TRPCError18({ code: "NOT_FOUND", message: "\uCDE8\uC18C\uD560 \uB9E4\uB3C4 \uC8FC\uBB38\uC744 \uCC3E\uC744 \uC218 \uC5C6\uAC70\uB098 \uC774\uBBF8 \uC2E4\uD589\uB418\uC5C8\uC2B5\uB2C8\uB2E4." });
     await db.update(orderIntents).set({ status: "rejected", riskReasonsJson: ["\uC0AC\uC6A9\uC790 \uCDE8\uC18C"] }).where(eq32(orderIntents.id, input.id));
     return { id: input.id, message: `${intent.name} \uB9E4\uB3C4 \uC8FC\uBB38\uC774 \uCDE8\uC18C\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
+   * 전략(정책) 삭제 — active가 아닌 정책만 삭제 가능
+   */
+  deletePolicy: publicProcedure.input(z20.object({ policyId: z20.number().int().positive() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [policy] = await db.select().from(autoTradePolicies).where(eq32(autoTradePolicies.id, input.policyId)).limit(1);
+    if (!policy) throw new TRPCError18({ code: "NOT_FOUND", message: "\uC815\uCC45\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    if (policy.status === "active") throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uD65C\uC131 \uC815\uCC45\uC740 \uC0AD\uC81C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uBA3C\uC800 \uC77C\uC2DC\uC815\uC9C0\uD558\uC138\uC694." });
+    await db.delete(autoTradePolicies).where(eq32(autoTradePolicies.id, input.policyId));
+    return { id: input.policyId, message: `\uC815\uCC45 v${policy.version}\uC774 \uC0AD\uC81C\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
+   * 채택 전략(프리셋) 삭제
+   */
+  deletePreset: publicProcedure.input(z20.object({ presetId: z20.number().int().positive() })).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const [preset] = await db.select().from(strategyPresets).where(eq32(strategyPresets.id, input.presetId)).limit(1);
+    if (!preset) throw new TRPCError18({ code: "NOT_FOUND", message: "\uC804\uB7B5\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
+    await db.delete(strategyPresets).where(eq32(strategyPresets.id, input.presetId));
+    return { id: input.presetId, message: `"${preset.name}" \uC804\uB7B5\uC774 \uC0AD\uC81C\uB418\uC5C8\uC2B5\uB2C8\uB2E4.` };
+  }),
+  /**
+   * 데이터 정리 — 오래된 positionSnapshots, 완료된 주문 이력 등 정리
+   * retainDays: 이 일수보다 오래된 데이터 삭제 (기본 30일)
+   */
+  cleanupOldData: publicProcedure.input(z20.object({ retainDays: z20.number().int().min(7).max(365).default(30) }).optional()).mutation(async ({ input }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError18({ code: "INTERNAL_SERVER_ERROR", message: "DB \uC5F0\uACB0 \uBD88\uAC00" });
+    const retainDays = input?.retainDays ?? 30;
+    const cutoff = new Date(Date.now() - retainDays * 24 * 60 * 60 * 1e3);
+    const deletedSnapshots = await db.delete(positionSnapshots).where(lt(positionSnapshots.capturedAt, cutoff)).returning({ id: positionSnapshots.id });
+    const deletedOrders = await db.delete(orderIntents).where(and22(
+      lt(orderIntents.createdAt, cutoff),
+      inArray9(orderIntents.status, ["rejected", "blocked"])
+    )).returning({ id: orderIntents.id });
+    const deletedPolicies = await db.delete(autoTradePolicies).where(and22(
+      eq32(autoTradePolicies.status, "superseded"),
+      lt(autoTradePolicies.createdAt, cutoff)
+    )).returning({ id: autoTradePolicies.id });
+    return {
+      retainDays,
+      cutoffDate: cutoff.toISOString().slice(0, 10),
+      deleted: {
+        positionSnapshots: deletedSnapshots.length,
+        rejectedOrders: deletedOrders.length,
+        oldPolicies: deletedPolicies.length
+      },
+      message: `${retainDays}\uC77C \uC774\uC804 \uB370\uC774\uD130 \uC815\uB9AC \uC644\uB8CC: \uC2A4\uB0C5\uC0F7 ${deletedSnapshots.length}\uAC74, \uAC70\uBD80 \uC8FC\uBB38 ${deletedOrders.length}\uAC74, \uC885\uB8CC \uC815\uCC45 ${deletedPolicies.length}\uAC74 \uC0AD\uC81C.`
+    };
   }),
   /**
    * 활성 전략 목록 조회 (다중 전략 동시 운용)
@@ -11789,7 +11841,7 @@ init_db();
 
 // server/quant/surgeAnalysis.ts
 init_db();
-import { sql as sql9 } from "drizzle-orm";
+import { sql as sql10 } from "drizzle-orm";
 function mean3(values) {
   if (!values.length) return 0;
   return values.reduce((s, v) => s + v, 0) / values.length;
@@ -11847,7 +11899,7 @@ function extractDayFeatures(bars) {
 async function runSurgeHypothesisAnalysis() {
   const db = await getDb();
   if (!db) return { status: "insufficient_data", message: "\uB370\uC774\uD130\uBCA0\uC774\uC2A4 \uC5F0\uACB0 \uBD88\uAC00", dataSummary: { tradingDays: 0, symbols: 0, totalBars: 0, surgeCount: 0, controlCount: 0 }, inSample: null, outOfSample: null, consistentFeatures: [], conclusion: "\uB370\uC774\uD130\uBCA0\uC774\uC2A4\uC5D0 \uC5F0\uACB0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." };
-  const rawBars = await db.execute(sql9`
+  const rawBars = await db.execute(sql10`
     SELECT "tradingDate", symbol, "minuteAt", open, high, low, close, volume::bigint as volume
     FROM intraday_minute_bars
     ORDER BY "tradingDate", symbol, "minuteAt"
@@ -12226,7 +12278,7 @@ async function createContext(opts) {
 init_schema();
 import { timingSafeEqual } from "crypto";
 import { createHash as createHash7 } from "node:crypto";
-import { and as and30, asc as asc12, count as count2, desc as desc34, eq as eq41, inArray as inArray13, like as like5, ne, sql as sql10 } from "drizzle-orm";
+import { and as and30, asc as asc12, count as count2, desc as desc34, eq as eq41, inArray as inArray13, like as like5, ne, sql as sql11 } from "drizzle-orm";
 init_db();
 var RESEARCH_NODE_TOKEN_HEADER = "x-research-node-token";
 var TERMINAL_CONNECTION_HANDLER_VERSION = "terminal-sync-owner-fallback-v2";
@@ -12810,7 +12862,7 @@ function registerLocalResearchNodeRoutes(app2) {
       if (bars.length !== submitted.length) return response.status(400).json({ status: "invalid_source_data", message: "\uC77C\uBD09 \uCCAD\uD06C\uC5D0 \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uC6D0\uBCF8\uC774 \uD3EC\uD568\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." });
       await db.insert(researchDailyBars).values(bars).onConflictDoUpdate({
         target: [researchDailyBars.datasetId, researchDailyBars.symbol, researchDailyBars.date],
-        set: { open: sql10`excluded.open`, high: sql10`excluded.high`, low: sql10`excluded.low`, close: sql10`excluded.close`, volume: sql10`excluded.volume`, turnover: sql10`excluded.turnover`, source: sql10`excluded.source` }
+        set: { open: sql11`excluded.open`, high: sql11`excluded.high`, low: sql11`excluded.low`, close: sql11`excluded.close`, volume: sql11`excluded.volume`, turnover: sql11`excluded.turnover`, source: sql11`excluded.source` }
       });
     } else {
       const bars = submitted.flatMap((raw) => {
@@ -12830,7 +12882,7 @@ function registerLocalResearchNodeRoutes(app2) {
       if (bars.length !== submitted.length) return response.status(400).json({ status: "invalid_source_data", message: "5\uBD84\uBD09 \uCCAD\uD06C\uC5D0 \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uC6D0\uBCF8\uC774 \uD3EC\uD568\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." });
       await db.insert(researchFiveMinuteBars).values(bars).onConflictDoUpdate({
         target: [researchFiveMinuteBars.datasetId, researchFiveMinuteBars.symbol, researchFiveMinuteBars.tradingDate, researchFiveMinuteBars.intervalAt],
-        set: { open: sql10`excluded.open`, high: sql10`excluded.high`, low: sql10`excluded.low`, close: sql10`excluded.close`, volume: sql10`excluded.volume`, source: sql10`excluded.source`, rawFingerprint: sql10`excluded."rawFingerprint"` }
+        set: { open: sql11`excluded.open`, high: sql11`excluded.high`, low: sql11`excluded.low`, close: sql11`excluded.close`, volume: sql11`excluded.volume`, source: sql11`excluded.source`, rawFingerprint: sql11`excluded."rawFingerprint"` }
       });
     }
     return response.json({ status: "chunk_recorded", requestId, datasetId, kind, acceptedBarCount: submitted.length });
@@ -12954,7 +13006,7 @@ function registerLocalResearchNodeRoutes(app2) {
     const values = selected.bars.map((bar) => ({ tradingDate: tradingDate2, symbol: bar.symbol, minuteAt: bar.minuteAt, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(Math.trunc(bar.volume)), source: "kiwoom_ka10080", rawFingerprint: minuteBarFingerprint(bar), capturedAt }));
     await db.insert(intradayMinuteBars).values(values).onConflictDoUpdate({
       target: [intradayMinuteBars.tradingDate, intradayMinuteBars.symbol, intradayMinuteBars.minuteAt],
-      set: { open: sql10`excluded.open`, high: sql10`excluded.high`, low: sql10`excluded.low`, close: sql10`excluded.close`, volume: sql10`excluded.volume`, rawFingerprint: sql10`excluded."rawFingerprint"`, capturedAt: sql10`excluded."capturedAt"` }
+      set: { open: sql11`excluded.open`, high: sql11`excluded.high`, low: sql11`excluded.low`, close: sql11`excluded.close`, volume: sql11`excluded.volume`, rawFingerprint: sql11`excluded."rawFingerprint"`, capturedAt: sql11`excluded."capturedAt"` }
     });
     const ensuredExperiment = await ensureLocalIntradayExperiment(db, tradingDate2);
     const closedExperiment = await closeLocalIntradayExperimentAtMarketClose(db, { tradingDate: tradingDate2, capturedAt });
@@ -12997,7 +13049,7 @@ function registerLocalResearchNodeRoutes(app2) {
       const values = selectedBars.slice(offset, offset + 1e3).map((bar) => ({ tradingDate: bar.tradingDate, symbol: bar.symbol, minuteAt: bar.minuteAt, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: String(Math.trunc(bar.volume)), source: "kiwoom_ka10080", rawFingerprint: minuteBarFingerprint(bar), capturedAt }));
       await db.insert(intradayMinuteBars).values(values).onConflictDoUpdate({
         target: [intradayMinuteBars.tradingDate, intradayMinuteBars.symbol, intradayMinuteBars.minuteAt],
-        set: { open: sql10`excluded.open`, high: sql10`excluded.high`, low: sql10`excluded.low`, close: sql10`excluded.close`, volume: sql10`excluded.volume`, rawFingerprint: sql10`excluded."rawFingerprint"`, capturedAt: sql10`excluded."capturedAt"` }
+        set: { open: sql11`excluded.open`, high: sql11`excluded.high`, low: sql11`excluded.low`, close: sql11`excluded.close`, volume: sql11`excluded.volume`, rawFingerprint: sql11`excluded."rawFingerprint"`, capturedAt: sql11`excluded."capturedAt"` }
       });
     }
     return response.json({ status: "synced", year, acceptedBarCount: selectedBars.length, rejectedBarCount, tradingDateCount: byTradingDate.size, capturedAt: capturedAt.toISOString() });
@@ -13044,14 +13096,14 @@ function registerLocalResearchNodeRoutes(app2) {
       await db.insert(localResearchDailyBars).values(values).onConflictDoUpdate({
         target: [localResearchDailyBars.symbol, localResearchDailyBars.date, localResearchDailyBars.adjustmentBasis],
         set: {
-          open: sql10`excluded.open`,
-          high: sql10`excluded.high`,
-          low: sql10`excluded.low`,
-          close: sql10`excluded.close`,
-          volume: sql10`excluded.volume`,
-          turnover: sql10`excluded.turnover`,
-          rawFingerprint: sql10`excluded."rawFingerprint"`,
-          capturedAt: sql10`excluded."capturedAt"`
+          open: sql11`excluded.open`,
+          high: sql11`excluded.high`,
+          low: sql11`excluded.low`,
+          close: sql11`excluded.close`,
+          volume: sql11`excluded.volume`,
+          turnover: sql11`excluded.turnover`,
+          rawFingerprint: sql11`excluded."rawFingerprint"`,
+          capturedAt: sql11`excluded."capturedAt"`
         }
       });
       const [runningWebReq] = await db.select().from(localDailyCollectionRequests).where(eq41(localDailyCollectionRequests.status, "running")).orderBy(desc34(localDailyCollectionRequests.startedAt)).limit(1);
