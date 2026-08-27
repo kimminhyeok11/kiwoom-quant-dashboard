@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Express, Request } from "express";
 import { and, asc, count, desc, eq, inArray, like, ne, sql } from "drizzle-orm";
-import { autoTradePolicies, autonomousResearchBars, autonomousResearchCandidates, autonomousResearchRuns, dayTradeExperimentPositions, dayTradeExperiments, intradayMinuteBars, kiwoomTerminalConnectionChecks, localMinuteCollectionRequests, localResearchDailyBars, localResearchNodeSyncEvents, orderExecutions, orderIntents, positionSnapshots, researchDailyBars, researchDatasets, researchFiveMinuteBars, sharedDatasetCollectionRequests, tradingProfiles, users } from "../drizzle/schema";
+import { autoTradePolicies, autonomousResearchBars, autonomousResearchCandidates, autonomousResearchRuns, bulkMinuteCollectionRequests, dayTradeExperimentPositions, dayTradeExperiments, intradayMinuteBars, kiwoomTerminalConnectionChecks, localDailyCollectionRequests, localMinuteCollectionRequests, localResearchDailyBars, localResearchNodeSyncEvents, orderExecutions, orderIntents, positionSnapshots, researchDailyBars, researchDatasets, researchFiveMinuteBars, sharedDatasetCollectionRequests, tradingProfiles, users } from "../drizzle/schema";
 import { calculateDayTradePortfolio } from "../shared/dayTradePortfolio";
 import { getDb } from "./db";
 import { publicHistoricalBacktest } from "./quant/publicHistoricalBacktest";
@@ -542,10 +542,23 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "연구 데이터베이스를 사용할 수 없습니다." });
+
+    // 이전 running 요청이 있고 봉이 쌓였으면 → completed 처리
+    const [runningReq] = await db.select().from(localDailyCollectionRequests).where(eq(localDailyCollectionRequests.status, "running")).orderBy(desc(localDailyCollectionRequests.startedAt)).limit(1);
+    if (runningReq && runningReq.acceptedBarCount > 0) {
+      await db.update(localDailyCollectionRequests).set({ status: "completed", completedAt: new Date() }).where(eq(localDailyCollectionRequests.id, runningReq.id));
+    }
+
+    // 웹 대시보드에서 생성된 새 수집 요청 체크 → running으로 전환
+    const [webRequest] = await db.select().from(localDailyCollectionRequests).where(eq(localDailyCollectionRequests.status, "queued")).orderBy(desc(localDailyCollectionRequests.requestedAt)).limit(1);
+    if (webRequest) {
+      await db.update(localDailyCollectionRequests).set({ status: "running", startedAt: new Date() }).where(eq(localDailyCollectionRequests.id, webRequest.id));
+    }
+
     const runs = await db.select({ universeJson: autonomousResearchRuns.universeJson }).from(autonomousResearchRuns).where(eq(autonomousResearchRuns.dataStatus, "ready")).orderBy(desc(autonomousResearchRuns.updatedAt)).limit(40);
     const symbols = selectLocalDailyCollectionUniverse(runs, 20);
     if (!symbols.length) return response.status(409).json({ status: "waiting_for_universe", message: "실제 일봉 수집에 사용할 저장 연구 유니버스가 없습니다." });
-    return response.json({ status: "ready", mode: "scheduled_daily_collection", adjustmentBasis: "adjusted", symbols });
+    return response.json({ status: "ready", mode: "scheduled_daily_collection", adjustmentBasis: "adjusted", symbols, webRequestId: webRequest?.id ?? null });
   });
 
   app.get("/api/local-research-node/shared-dataset-collection-plan", async (request, response) => {
@@ -884,13 +897,29 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       rawFingerprint: dailyBarFingerprint({ symbol, adjustmentBasis, bar }),
       capturedAt,
     }));
-    await db.insert(localResearchDailyBars).values(values).onConflictDoUpdate({
-      target: [localResearchDailyBars.symbol, localResearchDailyBars.date, localResearchDailyBars.adjustmentBasis],
-      set: {
-        open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, turnover: sql`excluded.turnover`, rawFingerprint: sql`excluded."rawFingerprint"`, capturedAt: sql`excluded."capturedAt"`,
-      },
-    });
-    return response.json({ status: "synced", symbol, adjustmentBasis, acceptedBarCount: values.length, rejectedBarCount: selected.rejected, deduplicatedBarCount: selected.deduplicated, capturedAt: capturedAt.toISOString() });
+    try {
+      await db.insert(localResearchDailyBars).values(values).onConflictDoUpdate({
+        target: [localResearchDailyBars.symbol, localResearchDailyBars.date, localResearchDailyBars.adjustmentBasis],
+        set: {
+          open: sql`excluded.open`, high: sql`excluded.high`, low: sql`excluded.low`, close: sql`excluded.close`, volume: sql`excluded.volume`, turnover: sql`excluded.turnover`, rawFingerprint: sql`excluded."rawFingerprint"`, capturedAt: sql`excluded."capturedAt"`,
+        },
+      });
+      // 웹 대시보드 수집 요청 상태 업데이트 (running → 봉 수 누적)
+      const [runningWebReq] = await db.select().from(localDailyCollectionRequests).where(eq(localDailyCollectionRequests.status, "running")).orderBy(desc(localDailyCollectionRequests.startedAt)).limit(1);
+      if (runningWebReq) {
+        await db.update(localDailyCollectionRequests).set({
+          acceptedBarCount: runningWebReq.acceptedBarCount + values.length,
+          rejectedBarCount: runningWebReq.rejectedBarCount + selected.rejected,
+          symbolCount: runningWebReq.symbolCount + 1,
+          updatedAt: new Date(),
+        }).where(eq(localDailyCollectionRequests.id, runningWebReq.id));
+      }
+      return response.json({ status: "synced", symbol, adjustmentBasis, acceptedBarCount: values.length, rejectedBarCount: selected.rejected, deduplicatedBarCount: selected.deduplicated, capturedAt: capturedAt.toISOString() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 500) : "일봉 저장에 실패했습니다.";
+      console.error("[daily-bar-sync] DB error:", message);
+      return response.status(500).json({ status: "db_error", message, symbol });
+    }
   });
 
   app.post("/api/local-research-node/daily-dataset-promote", async (request, response) => {
@@ -1049,29 +1078,33 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     if (!db) return response.status(503).json({ status: "unavailable", message: "연구 데이터베이스를 사용할 수 없습니다." });
 
     const tradingDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
-    const experiment = await ensureLocalIntradayExperiment(db, tradingDate);
-    if (!experiment) return response.status(409).json({ status: "waiting_for_data", message: "장중 실시간 모의투자 조건식 기록이 아직 없습니다." });
-    if (experiment.status !== "tracking") return response.status(409).json({ status: "market_closed", message: "장 마감으로 당일 모의 실험이 종료되어 새 자동 주문 계획을 만들지 않습니다.", experimentId: experiment.id, tradingDate: experiment.tradingDate });
     const [policy] = await db.select().from(autoTradePolicies).where(eq(autoTradePolicies.status, "active")).orderBy(desc(autoTradePolicies.updatedAt)).limit(1);
     if (!policy) return response.status(409).json({ status: "waiting_for_policy", message: "활성 자동 실투 정책이 아직 없습니다." });
     const profile = (await db.select().from(tradingProfiles).where(eq(tradingProfiles.userId, policy.userId)).limit(1))[0];
     if (!profile || profile.killSwitch || !profile.autoTradeEnabled) return response.status(409).json({ status: "automatic_execution_paused", message: "자동매매 활성화와 킬 스위치 해제가 필요합니다." });
-    const positions = await db.select().from(dayTradeExperimentPositions).where(eq(dayTradeExperimentPositions.experimentId, experiment.id));
+
+    // 실험이 없어도 정책은 반환 (수집기가 독립적으로 매매 가능)
+    const experiment = await ensureLocalIntradayExperiment(db, tradingDate);
+    const positions = experiment
+      ? await db.select().from(dayTradeExperimentPositions).where(eq(dayTradeExperimentPositions.experimentId, experiment.id))
+      : [];
+    const isExperimentActive = experiment?.status === "tracking";
+
     const candidateIds = Array.from(new Set(positions.map(position => position.candidateId)));
     const candidates = candidateIds.length
       ? await db.select({ id: autonomousResearchCandidates.id, fitnessScore: autonomousResearchCandidates.fitnessScore }).from(autonomousResearchCandidates).where(inArray(autonomousResearchCandidates.id, candidateIds))
       : [];
     const fitnessByCandidateId = new Map(candidates.map(candidate => [candidate.id, Number(candidate.fitnessScore ?? 0)]));
-    const plan = buildLocalAutoOrderPlan({
+    const plan = experiment && isExperimentActive ? buildLocalAutoOrderPlan({
       experimentId: experiment.id,
-      tradingDate: experiment.tradingDate,
+      tradingDate: experiment.tradingDate ?? tradingDate,
       policyVersion: String(policy.version),
       totalCapital: policy.totalCapital,
       policyId: policy.id,
       positions,
       fitnessByCandidateId,
       maxPositions: policy.maxConcurrentPositions,
-    });
+    }) : { experimentId: null, tradingDate, orders: [], status: "no_experiment" };
     return response.json({ ...plan, totalCapital: policy.totalCapital, policy: {
       id: policy.id,
       version: policy.version,
@@ -1080,6 +1113,10 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       stopLossPercent: Number(policy.stopLossPercent),
       takeProfitPercent: Number(policy.takeProfitPercent),
       dailyLossLimitPercent: Number(policy.dailyLossLimitPercent),
+      entryTiming: policy.entryTiming ?? "prev_close_next_open",
+      maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"),
+      positionSizingMode: policy.positionSizingMode ?? "half_kelly",
+      positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10"),
     } });
   });
 
@@ -1094,7 +1131,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
     const policyVersion = Number(body.policyVersion);
     const [policy] = await db.select().from(autoTradePolicies).where(and(eq(autoTradePolicies.id, policyId), eq(autoTradePolicies.version, policyVersion))).limit(1);
     if (!policy) return response.status(409).json({ status: "policy_missing", message: "실행 시작 시점의 자동 실투 정책 기록을 찾을 수 없습니다." });
-    const policySnapshot = { id: policy.id, version: policy.version, totalCapital: policy.totalCapital, maxConcurrentPositions: policy.maxConcurrentPositions, stopLossPercent: Number(policy.stopLossPercent), takeProfitPercent: Number(policy.takeProfitPercent), dailyLossLimitPercent: Number(policy.dailyLossLimitPercent) };
+    const policySnapshot = { id: policy.id, version: policy.version, totalCapital: policy.totalCapital, maxConcurrentPositions: policy.maxConcurrentPositions, stopLossPercent: Number(policy.stopLossPercent), takeProfitPercent: Number(policy.takeProfitPercent), dailyLossLimitPercent: Number(policy.dailyLossLimitPercent), entryTiming: policy.entryTiming ?? "prev_close_next_open", maxOpenGapPercent: Number(policy.maxOpenGapPercent ?? "3"), positionSizingMode: policy.positionSizingMode ?? "half_kelly", positionSizingFixedPercent: Number(policy.positionSizingFixedPercent ?? "10") };
     const accepted: number[] = [];
     for (const raw of body.orders) {
       const item = raw as Record<string, unknown>;
@@ -1129,5 +1166,71 @@ export function registerLocalResearchNodeRoutes(app: Express) {
       await db.insert(positionSnapshots).values({ userId: policy.userId, symbol, name, quantity: Math.floor(quantity), averagePrice: Math.floor(averagePrice), currentPrice: Math.floor(currentPrice), profitLoss: Math.floor(profitLoss), profitLossRate: String(profitLossRate) });
     }
     return response.json({ status: "synced", orderIntentIds: accepted, policyVersion: policy.version });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 벌크 1분봉 수집 전용 엔드포인트
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** 로컬 노드용: 대기 중인 벌크 1분봉 수집 요청 조회 */
+  app.get("/api/local-research-node/bulk-minute-collection-plan", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+
+    const [pending] = await db.select().from(bulkMinuteCollectionRequests)
+      .where(inArray(bulkMinuteCollectionRequests.status, ["queued", "running"]))
+      .orderBy(desc(bulkMinuteCollectionRequests.requestedAt))
+      .limit(1);
+
+    if (!pending) return response.json({ status: "idle", message: "대기 중인 벌크 수집 요청이 없습니다." });
+
+    // Running 상태로 전환
+    if (pending.status === "queued") {
+      await db.update(bulkMinuteCollectionRequests).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(bulkMinuteCollectionRequests.id, pending.id));
+    }
+
+    return response.json({
+      status: "ready",
+      requestId: pending.id,
+      symbols: pending.symbolsJson as string[],
+      targetDays: pending.targetDays,
+      completedSymbols: pending.completedSymbols,
+      totalSymbols: pending.totalSymbols,
+      instruction: "각 종목에 대해 ka10080 tic_scope=1, maxPages=10으로 조회 후 intraday-minute-backfill-sync로 업로드하세요.",
+    });
+  });
+
+  /** 로컬 노드용: 벌크 수집 진행 상태 보고 */
+  app.post("/api/local-research-node/bulk-minute-collection-progress", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    const db = await getDb();
+    if (!db) return response.status(503).json({ status: "unavailable" });
+
+    const body = request.body as { requestId?: unknown; completedSymbols?: unknown; acceptedBarCount?: unknown; currentSymbol?: unknown; totalSymbols?: unknown; status?: unknown; lastError?: unknown } | undefined;
+    const requestId = Number(body?.requestId);
+    if (!Number.isInteger(requestId) || requestId < 1) return response.status(400).json({ status: "invalid_request", message: "requestId가 필요합니다." });
+
+    const completedSymbols = Number(body?.completedSymbols ?? 0);
+    const acceptedBarCount = Number(body?.acceptedBarCount ?? 0);
+    const currentSymbol = typeof body?.currentSymbol === "string" ? body.currentSymbol : null;
+    const newStatus = body?.status === "completed" ? "completed" : body?.status === "failed" ? "failed" : "running";
+    const lastError = typeof body?.lastError === "string" ? body.lastError.slice(0, 500) : null;
+
+    const updateData: Record<string, unknown> = {
+      completedSymbols,
+      acceptedBarCount,
+      progressJson: { stage: newStatus, currentSymbol, message: newStatus === "completed" ? "벌크 수집 완료" : newStatus === "failed" ? (lastError ?? "수집 실패") : `${currentSymbol ?? ""} 수집 중 (${completedSymbols}/${Number(body?.totalSymbols ?? 0)})` },
+      updatedAt: new Date(),
+    };
+
+    if (newStatus === "completed") { updateData.status = "completed"; updateData.completedAt = new Date(); }
+    if (newStatus === "failed") { updateData.status = "failed"; updateData.lastError = lastError; }
+    if (newStatus === "running") { updateData.status = "running"; }
+
+    await db.update(bulkMinuteCollectionRequests).set(updateData).where(eq(bulkMinuteCollectionRequests.id, requestId));
+    return response.json({ status: "updated", requestId });
   });
 }
