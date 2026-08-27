@@ -9121,9 +9121,11 @@ var mockTradingRouter = router({
     const [admin] = await db.select({ id: users2.id }).from(users2).where(eq32(users2.role, "admin")).limit(1);
     if (!admin) throw new TRPCError18({ code: "PRECONDITION_FAILED", message: "\uAD00\uB9AC\uC790 \uACC4\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
     const capital = input?.totalCapital ?? 1e7;
+    const [latestPolicy] = await db.select({ version: autoTradePolicies.version }).from(autoTradePolicies).where(eq32(autoTradePolicies.userId, admin.id)).orderBy(desc26(autoTradePolicies.version)).limit(1);
+    const nextVersion = (latestPolicy?.version ?? 0) + 1;
     const [policy] = await db.insert(autoTradePolicies).values({
       userId: admin.id,
-      version: 1,
+      version: nextVersion,
       status: "active",
       totalCapital: capital,
       maxConcurrentPositions: 5,
@@ -9143,7 +9145,7 @@ var mockTradingRouter = router({
     }
     return {
       policyId: policy.id,
-      version: 1,
+      version: nextVersion,
       message: `\uAE30\uBCF8 \uC815\uCC45 \uC0DD\uC131 \uC644\uB8CC (\uC790\uBCF8 ${(capital / 1e4).toFixed(0)}\uB9CC\uC6D0, SL 3%, TP 5%, 5\uC885\uBAA9). \uC790\uB3D9\uB9E4\uB9E4\uAC00 \uD65C\uC131\uD654\uB418\uC5C8\uC2B5\uB2C8\uB2E4.`
     };
   }),

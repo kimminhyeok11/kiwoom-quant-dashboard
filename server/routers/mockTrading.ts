@@ -477,10 +477,18 @@ export const mockTradingRouter = router({
 
       const capital = input?.totalCapital ?? 10_000_000;
 
+      // 기존 최대 version 조회
+      const [latestPolicy] = await db.select({ version: autoTradePolicies.version })
+        .from(autoTradePolicies)
+        .where(eq(autoTradePolicies.userId, admin.id))
+        .orderBy(desc(autoTradePolicies.version))
+        .limit(1);
+      const nextVersion = (latestPolicy?.version ?? 0) + 1;
+
       // 보수적 기본값으로 정책 생성
       const [policy] = await db.insert(autoTradePolicies).values({
         userId: admin.id,
-        version: 1,
+        version: nextVersion,
         status: "active",
         totalCapital: capital,
         maxConcurrentPositions: 5,
@@ -503,7 +511,7 @@ export const mockTradingRouter = router({
 
       return {
         policyId: policy.id,
-        version: 1,
+        version: nextVersion,
         message: `기본 정책 생성 완료 (자본 ${(capital / 10000).toFixed(0)}만원, SL 3%, TP 5%, 5종목). 자동매매가 활성화되었습니다.`,
       };
     }),
