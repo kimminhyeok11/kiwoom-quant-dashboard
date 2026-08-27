@@ -28,6 +28,7 @@ type BacktestResultItem = {
   totalTrades: number;
   worstDrawdown: number;
   fitnessScore: number;
+  robustnessScore?: number;
   symbolResults: Array<{
     symbol: string;
     totalReturn: number;
@@ -398,6 +399,11 @@ function ResultCard({
               <span className="text-slate-300">승률 {item.averageWinRate}%</span>
               <span className="text-slate-400">거래 {item.totalTrades}건</span>
               <span className="text-slate-500">최대 손실 {item.worstDrawdown}%</span>
+              {item.robustnessScore !== undefined && (
+                <span className={`font-bold ${item.robustnessScore >= 60 ? "text-emerald-300" : item.robustnessScore >= 40 ? "text-amber-300" : "text-rose-300"}`}>
+                  건전성 {item.robustnessScore}점
+                </span>
+              )}
             </div>
             {/* 청산 비율 요약 */}
             {item.symbolResults.length > 0 && (() => {

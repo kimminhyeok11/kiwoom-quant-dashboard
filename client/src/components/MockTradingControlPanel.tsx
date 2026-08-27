@@ -633,10 +633,16 @@ function ActiveStrategiesSection() {
     onSuccess: (data) => { toast.success(data.message); activePolicies.refetch(); },
     onError: (err) => toast.error(err.message),
   });
+  const deleteMutation = trpc.mockTrading.deletePolicy.useMutation({
+    onSuccess: (data) => { toast.success(data.message); activePolicies.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const cleanupMutation = trpc.mockTrading.cleanupOldData.useMutation({
+    onSuccess: (data) => toast.success(data.message),
+    onError: (err) => toast.error(err.message),
+  });
 
   const policies = activePolicies.data?.policies ?? [];
-
-  if (!policies.length) return null;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 sm:p-5">
@@ -645,35 +651,51 @@ function ActiveStrategiesSection() {
           <Shield size={16} className="text-violet-400" />
           <h3 className="text-sm font-bold text-white">활성 전략 ({policies.length}개)</h3>
         </div>
-        <span className="text-[10px] text-slate-500">동시 운용 중</span>
+        <button
+          onClick={() => { if (window.confirm("30일 이전 오래된 데이터를 정리합니까?")) cleanupMutation.mutate(); }}
+          disabled={cleanupMutation.isPending}
+          className="rounded-lg bg-slate-700/50 px-3 py-1.5 text-[10px] text-slate-400 hover:text-white hover:bg-slate-600/50 active:scale-95 disabled:opacity-50"
+        >
+          {cleanupMutation.isPending ? "정리 중..." : "데이터 정리"}
+        </button>
       </div>
 
-      <div className="space-y-2">
-        {policies.map(p => (
-          <div key={p.id} className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-900/30 px-3 sm:px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-300">v{p.version}</span>
-                <span className="text-xs font-medium text-white truncate">
-                  {p.totalCapital.toLocaleString()}원 · {p.maxConcurrentPositions}종목
-                </span>
+      {policies.length === 0 ? (
+        <p className="text-xs text-slate-500 text-center py-3">활성 전략이 없습니다.</p>
+      ) : (
+        <div className="space-y-2">
+          {policies.map(p => (
+            <div key={p.id} className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-900/30 px-3 sm:px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-300">v{p.version}</span>
+                  <span className="text-xs font-medium text-white truncate">
+                    {p.totalCapital.toLocaleString()}원 · {p.maxConcurrentPositions}종목
+                  </span>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-500">
+                  SL {p.stopLossPercent}% · TP {p.takeProfitPercent}% · {formatSizingLabel(p.positionSizingMode)}
+                </p>
               </div>
-              <p className="mt-1 text-[10px] text-slate-500">
-                SL {p.stopLossPercent}% · TP {p.takeProfitPercent}% · {p.positionSizingMode === "half_kelly" ? "Half Kelly" : p.positionSizingMode === "kelly" ? "Kelly" : p.positionSizingMode === "quarter_kelly" ? "Quarter Kelly" : `고정 ${p.positionSizingMode}`}
-              </p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => { if (window.confirm(`v${p.version} 정지?`)) pauseMutation.mutate({ policyId: p.id }); }}
+                  disabled={pauseMutation.isPending}
+                  className="rounded bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-300 hover:bg-amber-500/20 active:scale-95 disabled:opacity-50"
+                >
+                  정지
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => { if (window.confirm(`전략 v${p.version}을 일시정지합니까?`)) pauseMutation.mutate({ policyId: p.id }); }}
-              disabled={pauseMutation.isPending}
-              className="shrink-0 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 active:scale-95 disabled:opacity-50"
-            >
-              정지
-            </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function formatSizingLabel(mode: string) {
+  switch (mode) { case "kelly": return "Kelly"; case "half_kelly": return "Half Kelly"; case "quarter_kelly": return "Quarter Kelly"; default: return "고정"; }
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { BarChart3, Check, Database, FlaskConical, Scale, Shield, Target, TrendingUp, Zap } from "lucide-react";
+import { BarChart3, Check, Database, FlaskConical, Scale, Shield, Target, TrendingUp, X, Zap } from "lucide-react";
 
 type AdoptedStrategy = {
   id: number;
@@ -39,6 +39,11 @@ export function StrategyCompare() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [validationResults, setValidationResults] = useState<Map<number, ValidationResult["statistics"]>>(new Map());
   const [validating, setValidating] = useState<number | null>(null);
+
+  const deletePresetMutation = trpc.mockTrading.deletePreset.useMutation({
+    onSuccess: (data) => { toast.success(data.message); adopted.refetch(); },
+    onError: (err) => toast.error(err.message),
+  });
 
   const validateMutation = trpc.oneClickBacktest.randomValidation.useMutation({
     onSuccess: (data, variables) => {
@@ -108,7 +113,15 @@ export function StrategyCompare() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-white truncate">{s.name}</span>
-                    {isSelected && <Check size={14} className="shrink-0 text-teal-400" />}
+                    <div className="flex items-center gap-1.5">
+                      {isSelected && <Check size={14} className="shrink-0 text-teal-400" />}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (window.confirm(`"${s.name}" 전략을 삭제합니까?`)) deletePresetMutation.mutate({ presetId: s.id }); }}
+                        className="rounded p-0.5 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   </div>
                   <p className="mt-1 text-[10px] text-slate-500">
                     {new Date(s.createdAt).toLocaleDateString("ko-KR")}
