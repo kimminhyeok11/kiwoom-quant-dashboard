@@ -175,9 +175,40 @@ export function BacktestChartView({ symbol, trades, strategyLabel }: BacktestCha
           차트 데이터를 불러오는 중...
         </div>
       ) : bars.length < 10 ? (
-        <div className="flex h-60 flex-col items-center justify-center gap-2 text-center">
-          <p className="text-sm text-slate-300">{symbol}의 일봉 데이터가 부족합니다</p>
-          <p className="text-xs text-slate-500">로컬 수집기로 데이터를 먼저 수집하세요</p>
+        <div className="flex flex-col gap-3">
+          {/* Fallback: 거래 기반 수익 시각화 (일봉 데이터 없을 때) */}
+          {visibleTrades.length > 0 ? (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+              <p className="text-xs font-bold text-slate-300 mb-3">
+                거래 기반 수익 곡선 (일봉 데이터 없이 표시)
+              </p>
+              <div className="flex h-32 items-end gap-[2px]">
+                {visibleTrades.map((t, i) => {
+                  const maxAbs = Math.max(...visibleTrades.map(tr => Math.abs(tr.returnPercent)), 1);
+                  const heightPct = Math.max(8, (Math.abs(t.returnPercent) / maxAbs) * 100);
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 min-w-[3px] max-w-[16px] rounded-t-sm ${t.returnPercent >= 0 ? "bg-red-400/80" : "bg-blue-400/80"}`}
+                      style={{ height: `${heightPct}%` }}
+                      title={`${t.entryDate} → ${t.exitDate}: ${t.returnPercent >= 0 ? "+" : ""}${t.returnPercent.toFixed(2)}%`}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mt-2 flex justify-between text-[10px] text-slate-500">
+                <span>{visibleTrades[0]?.entryDate.slice(5)}</span>
+                <span>{visibleTrades[visibleTrades.length - 1]?.exitDate.slice(5)}</span>
+              </div>
+            </div>
+          ) : null}
+          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 py-6 text-center">
+            <p className="text-sm text-slate-300">{symbol}의 일봉 차트 데이터가 아직 수집되지 않았습니다</p>
+            <p className="text-xs text-slate-500 max-w-sm">
+              로컬 PC에서 수집기를 실행하면 캔들 차트가 표시됩니다.
+              위 막대 그래프는 백테스트 거래 결과입니다.
+            </p>
+          </div>
         </div>
       ) : (
         <HtsChart

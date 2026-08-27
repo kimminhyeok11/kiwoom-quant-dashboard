@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { kiwoomTerminalConnectionChecks, researchDailyBars, researchDatasets, researchFiveMinuteBars, sharedDatasetBacktests, sharedDatasetCollectionRequests, strategyPresets } from "../../drizzle/schema";
+import { notifyOwner } from "../_core/notification";
 import type { ConditionRule } from "../../shared/trading";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
@@ -80,6 +81,11 @@ export const sharedDatasetsRouter = router({
     const existing = (await db.select().from(sharedDatasetCollectionRequests).where(eq(sharedDatasetCollectionRequests.requestFingerprint, requestFingerprint)).limit(1))[0];
     if (existing) return { status: existing.status, requestId: existing.id, datasetId: existing.datasetId, randomSeed: existing.randomSeed, reusedRequest: true };
     const [created] = await db.insert(sharedDatasetCollectionRequests).values({ requestedByUserId: ctx.user.id, randomSeed: seed, symbolCount: input.symbolCount, sampleDays: input.sampleDays, requestFingerprint, status: "queued" }).returning();
+    // 텔레그램 알림: 로컬 PC 수집기 실행 필요 안내
+    void notifyOwner({
+      title: "📦 데이터 수집 요청 생성",
+      content: `${input.symbolCount}종목 · ${input.sampleDays}일 수집 요청이 대기열에 추가되었습니다.\n로컬 PC 수집기를 실행해주세요. (요청 #${created.id})`,
+    });
     return { status: "queued" as const, requestId: created.id, datasetId: null, randomSeed: seed, reusedRequest: false };
   }),
 

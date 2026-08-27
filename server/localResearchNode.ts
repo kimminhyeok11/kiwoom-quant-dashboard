@@ -468,17 +468,42 @@ function normalizeSharedDatasetStreamUniverse(value: unknown) {
   });
 }
 
+/** 수집기 마지막 heartbeat (메모리 — 서버 재시작 시 리셋) */
+let collectorLastSeenAt: Date | null = null;
+
+/** 수집기 마지막 접속 시각 조회 (다른 모듈에서 참조) */
+export function getCollectorLastSeenAt(): Date | null {
+  return collectorLastSeenAt;
+}
+
 export function registerLocalResearchNodeRoutes(app: Express) {
   app.get("/api/local-research-node/health", (request, response) => {
     response.setHeader("Cache-Control", "no-store, private, max-age=0");
     if (!isLocalResearchNodeAuthorized(request)) {
       return response.status(401).json({ status: "unauthorized" });
     }
+    // 수집기가 health를 호출할 때마다 heartbeat 갱신
+    collectorLastSeenAt = new Date();
     return response.json({
       status: "ready",
       mode: "local_automatic_execution",
       allowed: ["oauth_token", "daily_bar_collection", "daily_bar_collection_plan", "daily_bar_sync", "daily_dataset_promote", "daily_dataset_research", "research_dataset_upload", "shared_dataset_collection_plan", "shared_dataset_collection_sync", "shared_dataset_collection_status", "auto_order_plan", "execution_sync", "position_sync", "intraday_price_plan", "intraday_price_sync", "intraday_price_status", "intraday_minute_collection_plan", "intraday_minute_sync", "intraday_minute_backfill_plan", "intraday_minute_backfill_sync", "intraday_minute_collection_status"],
       blocked: ["manual_web_order_transmission"],
+    });
+  });
+
+  /** 수집기 heartbeat 조회 (프론트엔드용 — 인증 불필요) */
+  app.get("/api/local-research-node/collector-heartbeat", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store, private, max-age=0");
+    const alive = collectorLastSeenAt && (Date.now() - collectorLastSeenAt.getTime()) < 10 * 60 * 1000; // 10분 이내면 alive
+    return response.json({
+      lastSeenAt: collectorLastSeenAt?.toISOString() ?? null,
+      alive: Boolean(alive),
+      message: !collectorLastSeenAt
+        ? "수집기가 아직 한 번도 접속하지 않았습니다."
+        : alive
+        ? `수집기 정상 동작 중 (마지막 접속: ${Math.round((Date.now() - collectorLastSeenAt.getTime()) / 1000)}초 전)`
+        : `수집기 오프라인 (마지막 접속: ${Math.round((Date.now() - collectorLastSeenAt.getTime()) / 60000)}분 전)`,
     });
   });
 
@@ -564,6 +589,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
   app.get("/api/local-research-node/shared-dataset-collection-plan", async (request, response) => {
     response.setHeader("Cache-Control", "no-store, private, max-age=0");
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    collectorLastSeenAt = new Date();
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "연구 데이터베이스를 사용할 수 없습니다." });
     const queued = (await db.select().from(sharedDatasetCollectionRequests).where(eq(sharedDatasetCollectionRequests.status, "queued")).orderBy(desc(sharedDatasetCollectionRequests.requestedAt)).limit(1))[0];
@@ -1074,6 +1100,7 @@ export function registerLocalResearchNodeRoutes(app: Express) {
   app.get("/api/local-research-node/auto-order-plan", async (request, response) => {
     response.setHeader("Cache-Control", "no-store, private, max-age=0");
     if (!isLocalResearchNodeAuthorized(request)) return response.status(401).json({ status: "unauthorized" });
+    collectorLastSeenAt = new Date();
     const db = await getDb();
     if (!db) return response.status(503).json({ status: "unavailable", message: "연구 데이터베이스를 사용할 수 없습니다." });
 

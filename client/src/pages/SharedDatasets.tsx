@@ -50,6 +50,7 @@ export default function SharedDatasets() {
   const vault = trpc.sharedDatasets.vaultSummary.useQuery(undefined, { staleTime: 30_000, refetchInterval: 60_000 });
   const presets = trpc.presets.list.useQuery(undefined, { enabled: Boolean(user), retry: false });
   const terminalConnection = trpc.network.myKiwoomTerminalStatus.useQuery(undefined, { enabled: Boolean(user), retry: false, refetchInterval: user ? 5_000 : false });
+  const collectorHeartbeat = trpc.dataCollection.collectorHeartbeat.useQuery(undefined, { staleTime: 10_000, refetchInterval: 15_000 });
   const requests = trpc.sharedDatasets.listMyCollectionRequests.useQuery(undefined, { enabled: Boolean(user), retry: false, refetchInterval: 4_000 });
   const backtests = trpc.sharedDatasets.listMyBacktests.useQuery(undefined, { enabled: Boolean(user), retry: false });
   const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
@@ -74,7 +75,7 @@ export default function SharedDatasets() {
     onSuccess: async result => {
       await utils.sharedDatasets.listMyCollectionRequests.invalidate();
       if (result.datasetId) { await utils.sharedDatasets.listPublic.invalidate(); setSelectedDatasetId(result.datasetId); }
-      toast.success(result.status === "queued" ? "인증된 키움 단말에서 필요할 때 처리할 실제 원본 수집 요청을 만들었습니다." : result.status === "completed" ? "완료된 공용 데이터셋 요청을 다시 사용합니다." : "공용 원본 수집 요청 상태를 불러왔습니다.");
+      toast.success(result.reusedRequest ? "이미 진행 중인 수집 요청을 추적합니다." : result.status === "completed" ? "완료된 공용 데이터셋을 재사용합니다." : `수집 요청이 대기열에 추가되었습니다. ${collectorAlive ? "수집기가 곧 자동 처리합니다." : "⚠️ 로컬 PC 수집기를 실행해야 처리됩니다."}`);
     }, onError: error => toast.error(error.message),
   });
   const resumeCollection = trpc.sharedDatasets.resumeCollection.useMutation({
@@ -115,7 +116,9 @@ export default function SharedDatasets() {
   }, [announcedRequest, collectionNotificationPermission, latestRequest, utils.sharedDatasets.listPublic]);
 
   const terminalReady = terminalConnection.data?.status === "connected";
-  const terminalAction = !user ? "로그인 후 현재 컴퓨터에서 단말 인증을 확인하세요." : terminalConnection.isLoading ? "키움 단말 인증 상태를 확인하고 있습니다." : terminalReady ? `키움 단말 ${terminalConnection.data?.terminalIp}의 인증이 완료되었습니다. 수집 요청을 만들 수 있습니다.` : terminalConnection.data ? `키움 단말 ${terminalConnection.data.terminalIp} 인증이 실패했습니다. check-kiwoom-rest-connection.cmd를 다시 실행하세요.` : "현재 컴퓨터에서 check-kiwoom-rest-connection.cmd를 실행하면 인증 성공 후 수집 버튼이 자동으로 활성화됩니다.";
+  const collectorAlive = collectorHeartbeat.data?.alive ?? false;
+  const collectorMessage = collectorHeartbeat.data?.message ?? "";
+  const terminalAction = !user ? "로그인 후 현재 컴퓨터에서 단말 인증을 확인하세요." : terminalConnection.isLoading ? "키움 단말 인증 상태를 확인하고 있습니다." : terminalReady ? `키움 단말 인증 완료. ${collectorAlive ? "수집기 정상 동작 중 — 요청 시 자동 처리됩니다." : "⚠️ 수집기 오프라인 — 로컬 PC에서 수집기를 실행해야 요청이 처리됩니다."}` : terminalConnection.data ? `키움 단말 ${terminalConnection.data.terminalIp} 인증 실패. check-kiwoom-rest-connection.cmd를 실행하세요.` : `단말 인증 필요. ${collectorAlive ? "수집기는 정상이나 키움 단말 인증이 필요합니다." : "로컬 PC에서 check-kiwoom-rest-connection.cmd를 실행하세요."}`;
   const collectionNotificationsSupported = collectionNotificationPermission !== "unsupported";
   const enableCollectionNotifications = async () => {
     if (!collectionNotificationsSupported) { toast.error("이 브라우저는 시스템 알림을 지원하지 않습니다. 화면의 수집 상태 알림을 사용하세요."); return; }

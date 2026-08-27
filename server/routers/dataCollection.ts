@@ -185,4 +185,26 @@ export const dataCollectionRouter = router({
       },
     };
   }),
+
+  /**
+   * 수집기 heartbeat 조회
+   * 수집기가 마지막으로 서버에 접속한 시각을 표시합니다.
+   */
+  collectorHeartbeat: publicProcedure.query(async () => {
+    // collector-heartbeat 엔드포인트를 내부적으로 호출하는 대신,
+    // 같은 서버 프로세스의 메모리 변수를 직접 참조
+    const { getCollectorLastSeenAt } = await import("../localResearchNode");
+    const lastSeenAt = getCollectorLastSeenAt();
+    const alive = lastSeenAt && (Date.now() - lastSeenAt.getTime()) < 10 * 60 * 1000;
+    return {
+      lastSeenAt: lastSeenAt?.toISOString() ?? null,
+      alive: Boolean(alive),
+      agoSeconds: lastSeenAt ? Math.round((Date.now() - lastSeenAt.getTime()) / 1000) : null,
+      message: !lastSeenAt
+        ? "수집기가 아직 접속한 적 없습니다. 로컬 PC에서 수집기를 실행하세요."
+        : alive
+        ? `수집기 정상 (${Math.round((Date.now() - lastSeenAt.getTime()) / 1000)}초 전 접속)`
+        : `수집기 오프라인 (${Math.round((Date.now() - lastSeenAt.getTime()) / 60000)}분 전 마지막 접속)`,
+    };
+  }),
 });
