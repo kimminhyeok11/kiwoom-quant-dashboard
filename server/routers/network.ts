@@ -106,6 +106,13 @@ export const networkRouter = router({
     ip: normalizeIp(ctx.req.ip) ?? normalizeIp(ctx.req.headers["x-forwarded-for"] as string | undefined) ?? normalizeIp(ctx.req.socket?.remoteAddress),
     scope: "current_request" as const,
   })),
+  collectorStatus: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return null;
+    const check = (await db.select({ terminalIp: kiwoomTerminalConnectionChecks.terminalIp, status: kiwoomTerminalConnectionChecks.status, verificationJson: kiwoomTerminalConnectionChecks.verificationJson, checkedAt: kiwoomTerminalConnectionChecks.checkedAt }).from(kiwoomTerminalConnectionChecks).orderBy(desc(kiwoomTerminalConnectionChecks.checkedAt)).limit(1))[0] ?? null;
+    if (!check) return { connected: false, lastSyncAt: null, terminalIp: null, roundTripVerified: false };
+    return { connected: check.status === "connected", lastSyncAt: check.checkedAt, terminalIp: check.terminalIp, roundTripVerified: isTerminalRoundTripVerified(check.verificationJson) };
+  }),
   myKiwoomTerminalStatus: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return null;

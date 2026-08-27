@@ -1,9 +1,9 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { strategyPresets } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { operatorProcedure, router } from "../_core/trpc";
+import { operatorProcedure, publicProcedure, router } from "../_core/trpc";
 
 const ruleSchema = z.object({
   id: z.string().min(1),
@@ -65,5 +65,35 @@ export const presetsRouter = router({
     const result = await db.delete(strategyPresets).where(and(eq(strategyPresets.id, input.id), eq(strategyPresets.userId, ctx.user.id)));
     if (result.length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "삭제할 프리셋을 찾을 수 없습니다." });
     return { success: true };
+  }),
+
+  /**
+   * 기본 제공 추천 전략 목록 (모든 사용자 접근 가능)
+   * 7년 데이터 검증된 전략들
+   */
+  defaults: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    // isDefault flag is stored in scoringJson.tags or rulesJson.isDefault
+    const all = await db.select().from(strategyPresets).orderBy(desc(strategyPresets.createdAt)).limit(50);
+    return all
+      .filter(p => {
+        const rules = p.rulesJson as Record<string, unknown> | null;
+        return rules && (rules as { isDefault?: boolean }).isDefault === true;
+      })
+      .map(p => {
+        const data = p.rulesJson as { rules?: unknown[]; expression?: unknown; backtest?: unknown; tags?: string[]; holdingDays?: number; isDefault?: boolean };
+        return {
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          expression: data.expression,
+          rules: data.rules,
+          backtest: data.backtest as { winRate: number; totalReturn: number; tradeCount: number; maxDrawdown: number; holdingDays: number; testedPeriod: string; dataPoints: number } | undefined,
+          tags: data.tags ?? [],
+          holdingDays: data.holdingDays ?? 5,
+          createdAt: p.createdAt,
+        };
+      });
   }),
 });

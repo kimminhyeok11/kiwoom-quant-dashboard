@@ -539,3 +539,137 @@ export function enqueueMinuteResearchSweep(programId: number, runner: (id: numbe
   queuedMinuteResearchSweeps.set(programId, task);
   return { status: "queued" as const, programId, reused: false };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 역대 Top 50 랭킹 + 누적 지표 통계
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 역대 전체 배틀에서 fitnessScore가 가장 높은 상위 50개 후보를 반환한다.
+ * promoted 상태인 후보만 집계한다 (검증 통과 결과만 의미가 있으므로).
+ */
+export async function getAllTimeTopRanking(userId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return { ranking: [], totalPromotedCount: 0 };
+
+  const program = (await db.select().from(minuteResearchPrograms).where(eq(minuteResearchPrograms.userId, userId)).limit(1))[0];
+  if (!program) return { ranking: [], totalPromotedCount: 0 };
+
+  const sweepIds = (await db.select({ id: minuteResearchSweeps.id }).from(minuteResearchSweeps).where(eq(minuteResearchSweeps.programId, program.id))).map(s => s.id);
+  if (!sweepIds.length) return { ranking: [], totalPromotedCount: 0 };
+
+  const allPromoted = await db.select().from(minuteResearchCandidates)
+    .where(and(
+      inArray(minuteResearchCandidates.sweepId, sweepIds),
+      eq(minuteResearchCandidates.status, "promoted"),
+    ))
+    .orderBy(desc(minuteResearchCandidates.fitnessScore))
+    .limit(limit);
+
+  // Total count for stats
+  const totalPromotedRows = await db.select({ id: minuteResearchCandidates.id }).from(minuteResearchCandidates)
+    .where(and(
+      inArray(minuteResearchCandidates.sweepId, sweepIds),
+      eq(minuteResearchCandidates.status, "promoted"),
+    ));
+
+  const ranking = allPromoted.map((candidate, index) => ({
+    rank: index + 1,
+    candidateId: candidate.id,
+    sweepId: candidate.sweepId,
+    strategyFingerprint: candidate.strategyFingerprint,
+    fitnessScore: Number(candidate.fitnessScore),
+    winRate: Number(candidate.winRate),
+    netReturnPercent: Number(candidate.netReturnPercent),
+    validationReturnPercent: Number(candidate.validationReturnPercent),
+    validationExpectancyPercent: Number(candidate.validationExpectancyPercent),
+    validationMaxDrawdownPercent: Number(candidate.validationMaxDrawdownPercent),
+    tradeCount: candidate.tradeCount,
+    validationTradeCount: candidate.validationTradeCount,
+    rootGenomeJson: candidate.rootGenomeJson,
+    createdAt: candidate.createdAt,
+  }));
+
+  return { ranking, totalPromotedCount: totalPromotedRows.length };
+}
+
+/**
+ * 역대 promoted 후보의 rootGenomeJson에서 규칙 타입별 등장 빈도·평균 성과를 집계한다.
+ * "어떤 지표(RSI, MACD 등)가 상위 조건식에 가장 많이 등장했는가" 질문에 답한다.
+ */
+export async function getCumulativeIndicatorStats(userId: number) {
+  const db = await getDb();
+  if (!db) return { indicators: [], pairs: [], totalCandidates: 0 };
+
+  const program = (await db.select().from(minuteResearchPrograms).where(eq(minuteResearchPrograms.userId, userId)).limit(1))[0];
+  if (!program) return { indicators: [], pairs: [], totalCandidates: 0 };
+
+  const sweepIds = (await db.select({ id: minuteResearchSweeps.id }).from(minuteResearchSweeps).where(eq(minuteResearchSweeps.programId, program.id))).map(s => s.id);
+  if (!sweepIds.length) return { indicators: [], pairs: [], totalCandidates: 0 };
+
+  // Get all promoted candidates across all sweeps
+  const promoted = await db.select().from(minuteResearchCandidates)
+    .where(and(
+      inArray(minuteResearchCandidates.sweepId, sweepIds),
+      eq(minuteResearchCandidates.status, "promoted"),
+    ))
+    .orderBy(desc(minuteResearchCandidates.fitnessScore))
+    .limit(500);
+
+  if (!promoted.length) return { indicators: [], pairs: [], totalCandidates: 0 };
+
+  // Rule type frequency and performance
+  const ruleStats = new Map<string, { count: number; totalWinRate: number; totalReturn: number; totalFitness: number }>();
+
+  for (const candidate of promoted) {
+    const rules = collectRuleTypes(candidate.rootGenomeJson);
+    for (const ruleType of rules) {
+      const stat = ruleStats.get(ruleType) ?? { count: 0, totalWinRate: 0, totalReturn: 0, totalFitness: 0 };
+      stat.count += 1;
+      stat.totalWinRate += Number(candidate.winRate);
+      stat.totalReturn += Number(candidate.validationReturnPercent);
+      stat.totalFitness += Number(candidate.fitnessScore);
+      ruleStats.set(ruleType, stat);
+    }
+  }
+
+  const indicators = Array.from(ruleStats.entries())
+    .map(([type, stat]) => ({
+      type,
+      count: stat.count,
+      frequency: round(stat.count / promoted.length * 100),
+      avgWinRate: round(stat.totalWinRate / stat.count),
+      avgReturnPercent: round(stat.totalReturn / stat.count),
+      avgFitnessScore: round(stat.totalFitness / stat.count),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  // Rule pair co-occurrence in top performers
+  const pairMap = new Map<string, { count: number; totalReturn: number; totalWinRate: number }>();
+  for (const candidate of promoted) {
+    const rules = Array.from(new Set(collectRuleTypes(candidate.rootGenomeJson))).sort();
+    for (let i = 0; i < rules.length; i++) {
+      for (let j = i + 1; j < rules.length; j++) {
+        const key = `${rules[i]}|${rules[j]}`;
+        const stat = pairMap.get(key) ?? { count: 0, totalReturn: 0, totalWinRate: 0 };
+        stat.count += 1;
+        stat.totalReturn += Number(candidate.validationReturnPercent);
+        stat.totalWinRate += Number(candidate.winRate);
+        pairMap.set(key, stat);
+      }
+    }
+  }
+
+  const pairs = Array.from(pairMap.entries())
+    .map(([key, stat]) => ({
+      pair: key.split("|") as [string, string],
+      count: stat.count,
+      avgReturnPercent: round(stat.totalReturn / stat.count),
+      avgWinRate: round(stat.totalWinRate / stat.count),
+    }))
+    .filter(p => p.count >= 3)
+    .sort((a, b) => b.avgReturnPercent - a.avgReturnPercent || b.count - a.count)
+    .slice(0, 10);
+
+  return { indicators, pairs, totalCandidates: promoted.length };
+}

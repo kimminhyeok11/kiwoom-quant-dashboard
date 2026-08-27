@@ -24,6 +24,12 @@ import { chartDataRouter } from "./routers/chartData";
 import { oneClickBacktestRouter } from "./routers/oneClickBacktest";
 import { mockTradingRouter } from "./routers/mockTrading";
 import { conditionBuilderRouter } from "./routers/conditionBuilder";
+import { intradayBacktestRouter } from "./routers/intradayBacktest";
+import { patternLearningRouter } from "./routers/patternLearning";
+import { dataCollectionRouter } from "./routers/dataCollection";
+import { performanceTrackerRouter } from "./routers/performanceTracker";
+import { strategyQualityRouter } from "./routers/strategyQuality";
+import { bulkMinuteCollectionRouter } from "./routers/bulkMinuteCollection";
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -60,6 +66,12 @@ export const appRouter = router({
   oneClickBacktest: oneClickBacktestRouter,
   mockTrading: mockTradingRouter,
   conditionBuilder: conditionBuilderRouter,
+  intradayBacktest: intradayBacktestRouter,
+  patternLearning: patternLearningRouter,
+  dataCollection: dataCollectionRouter,
+  performanceTracker: performanceTrackerRouter,
+  strategyQuality: strategyQualityRouter,
+  bulkMinuteCollection: bulkMinuteCollectionRouter,
 
   // TODO: add feature routers here, e.g.
   // todo: router({

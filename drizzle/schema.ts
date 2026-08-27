@@ -106,6 +106,14 @@ export const autoTradePolicies = pgTable(
     stopLossPercent: decimal("stopLossPercent", { precision: 8, scale: 4 }).notNull(),
     takeProfitPercent: decimal("takeProfitPercent", { precision: 8, scale: 4 }).notNull(),
     dailyLossLimitPercent: decimal("dailyLossLimitPercent", { precision: 8, scale: 4 }).notNull(),
+    /** 진입 타이밍: prev_close_next_open = 전일 종가 판단 → 다음날 시가 매수 (백테스트 동일) */
+    entryTiming: varchar("entryTiming", { length: 30 }).default("prev_close_next_open").notNull(),
+    /** 시가 갭 방어: 다음날 시가가 전일 종가 대비 이 비율 이상 괴리되면 주문 취소 (ex: 3.0 = ±3%) */
+    maxOpenGapPercent: decimal("maxOpenGapPercent", { precision: 5, scale: 2 }).default("3.00").notNull(),
+    /** 포지션 사이징 모드: kelly | half_kelly | quarter_kelly | fixed_percent */
+    positionSizingMode: varchar("positionSizingMode", { length: 20 }).default("half_kelly").notNull(),
+    /** fixed_percent 모드일 때 매수 비중 (ex: 10 = 잔여자본의 10%) */
+    positionSizingFixedPercent: decimal("positionSizingFixedPercent", { precision: 5, scale: 2 }).default("10.00").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -848,6 +856,25 @@ export const localMinuteCollectionRequests = pgTable(
   table => [uniqueIndex("local_minute_collection_request_key_uq").on(table.requestKey), index("local_minute_collection_status_time_idx").on(table.status, table.updatedAt), index("local_minute_collection_date_time_idx").on(table.tradingDate, table.updatedAt)],
 );
 
+export const localDailyCollectionRequests = pgTable(
+  "local_daily_collection_requests",
+  {
+    id: serial("id").primaryKey(),
+    requestKey: varchar("requestKey", { length: 64 }).notNull(),
+    status: collectionRequestStatusEnum("status").default("queued").notNull(),
+    source: varchar("source", { length: 48 }).default("web_dashboard").notNull(),
+    symbolCount: integer("symbolCount").default(0).notNull(),
+    acceptedBarCount: integer("acceptedBarCount").default(0).notNull(),
+    rejectedBarCount: integer("rejectedBarCount").default(0).notNull(),
+    lastError: varchar("lastError", { length: 500 }),
+    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => [uniqueIndex("local_daily_collection_request_key_uq").on(table.requestKey), index("local_daily_collection_status_idx").on(table.status, table.updatedAt)],
+);
+
 export const orderExecutions = pgTable(
   "order_executions",
   {
@@ -1048,3 +1075,36 @@ export const minuteResearchSymbolMetrics = pgTable(
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 벌크 1분봉 수집 요청
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const bulkMinuteCollectionRequests = pgTable(
+  "bulk_minute_collection_requests",
+  {
+    id: serial("id").primaryKey(),
+    /** 수집 대상 종목 리스트 (6자리 코드 배열) */
+    symbolsJson: json("symbolsJson").notNull(),
+    /** 수집 대상 일수 (최근 N 거래일) */
+    targetDays: integer("targetDays").default(60).notNull(),
+    /** 현재 상태 */
+    status: collectionRequestStatusEnum("status").default("queued").notNull(),
+    /** 전체 요청 종목 수 */
+    totalSymbols: integer("totalSymbols").default(0).notNull(),
+    /** 완료된 종목 수 */
+    completedSymbols: integer("completedSymbols").default(0).notNull(),
+    /** 수집된 총 봉 수 */
+    acceptedBarCount: integer("acceptedBarCount").default(0).notNull(),
+    /** 진행 상태 세부 (현재 종목 등) */
+    progressJson: json("progressJson"),
+    /** 에러 메시지 */
+    lastError: varchar("lastError", { length: 500 }),
+    /** 요청 시각 */
+    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => [index("bulk_minute_collection_status_idx").on(table.status, table.updatedAt)],
+);

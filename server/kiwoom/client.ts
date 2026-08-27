@@ -141,6 +141,13 @@ export type FiveMinuteBarsRequest = {
   maxPages?: number;
 };
 
+export type OneMinuteBarsRequest = {
+  symbol: string;
+  baseDate: string;
+  adjustedPrice?: "0" | "1";
+  maxPages?: number;
+};
+
 export type LiveBuyOrder = {
   symbol: string;
   quantity: number;
@@ -361,14 +368,53 @@ export class KiwoomClient {
         throw new KiwoomApiError(payload.return_msg ?? "키움 5분봉 차트 조회에 실패했습니다.", payload.return_code);
       }
       if (Array.isArray(payload.stk_min_pole_chart_qry)) rows.push(...payload.stk_min_pole_chart_qry);
-      const responseContinuation = String(payload.cont_yn ?? "N");
-      const responseNextKey = String(payload.next_key ?? "");
+      // 키움 분봉 API는 continuation을 응답 헤더로 반환할 수 있음 (body에 없을 때 헤더 확인)
+      const responseContinuation = String(payload.cont_yn ?? response.headers.get("cont-yn") ?? "N");
+      const responseNextKey = String(payload.next_key ?? response.headers.get("next-key") ?? "");
       if (responseContinuation !== "Y" || !responseNextKey) break;
       continuation = "Y";
       nextKey = responseNextKey;
     }
 
     if (!rows.length) throw new KiwoomApiError("키움 5분봉 차트 응답에 데이터가 없습니다.");
+    return normalizeKiwoomMinuteBars(rows);
+  }
+
+  /** ka10080의 1분 범위 응답을 시간순 OHLCV로 정규화한다. 대량 과거 수집에 사용. */
+  async getOneMinuteBars(accessToken: string, input: OneMinuteBarsRequest): Promise<IntradayMinuteBar[]> {
+    this.assertFixedIpRegistered();
+    const maxPages = Math.min(Math.max(input.maxPages ?? 10, 1), 10);
+    const rows: Array<Record<string, unknown>> = [];
+    let continuation = "N";
+    let nextKey = "";
+
+    for (let page = 0; page < maxPages; page += 1) {
+      if (page > 0) await new Promise(resolve => setTimeout(resolve, 1_000));
+      await this.readPacer.wait(`${this.mode}:${accessToken}`);
+      const { response, payload } = await this.fetchReadJson<KiwoomMinuteBarsResponse>(`${this.baseUrl}/api/dostk/chart`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json;charset=UTF-8",
+          authorization: `Bearer ${accessToken}`,
+          "api-id": "ka10080",
+          "cont-yn": continuation,
+          "next-key": nextKey,
+        },
+        body: JSON.stringify({ stk_cd: input.symbol, tic_scope: "1", upd_stkpc_tp: input.adjustedPrice ?? "1", base_dt: input.baseDate }),
+      });
+      if (!response.ok || String(payload.return_code ?? "0") !== "0") {
+        throw new KiwoomApiError(payload.return_msg ?? "키움 1분봉 차트 조회에 실패했습니다.", payload.return_code);
+      }
+      if (Array.isArray(payload.stk_min_pole_chart_qry)) rows.push(...payload.stk_min_pole_chart_qry);
+      // 키움 분봉 API는 continuation을 응답 헤더로 반환함
+      const responseContinuation = response.headers.get("cont-yn") ?? String(payload.cont_yn ?? "N");
+      const responseNextKey = response.headers.get("next-key") ?? String(payload.next_key ?? "");
+      if (responseContinuation !== "Y" || !responseNextKey) break;
+      continuation = "Y";
+      nextKey = responseNextKey;
+    }
+
+    if (!rows.length) throw new KiwoomApiError("키움 1분봉 차트 응답에 데이터가 없습니다.");
     return normalizeKiwoomMinuteBars(rows);
   }
 

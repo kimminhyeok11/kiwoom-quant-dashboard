@@ -6,7 +6,8 @@ import { COOKIE_NAME } from "../../shared/const";
 import { createHeartbeatJob, deleteHeartbeatJob, updateHeartbeatJob } from "../_core/heartbeat";
 import { operatorProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { DEFAULT_MINUTE_RESEARCH_CONFIGURATION, enqueueMinuteResearchSweep, getMinuteResearchDashboard, getPublicMinuteResearchDashboard, runMinuteResearchSweep } from "../quant/minuteResearch";
+import { DEFAULT_MINUTE_RESEARCH_CONFIGURATION, enqueueMinuteResearchSweep, getAllTimeTopRanking, getCumulativeIndicatorStats, getMinuteResearchDashboard, getPublicMinuteResearchDashboard, runMinuteResearchSweep } from "../quant/minuteResearch";
+import { analyzeMarketRegime } from "../quant/marketRegime";
 
 const configSchema = z.object({
   combinationsPerSweep: z.number().int().min(100).max(50_000),
@@ -110,4 +111,13 @@ export const minuteResearchRouter = router({
     await db.update(minuteResearchPrograms).set({ status: "paused", scheduleCronTaskUid: null }).where(eq(minuteResearchPrograms.id, program.id));
     return { removed: true };
   }),
+
+  /** 역대 Top 50 랭킹 (fitnessScore 기준, promoted만) */
+  allTimeRanking: protectedProcedure.query(({ ctx }) => getAllTimeTopRanking(ctx.user.id)),
+
+  /** 누적 지표 통계 — 어떤 규칙이 promoted 카드에 가장 자주 등장했는가 */
+  cumulativeIndicatorStats: protectedProcedure.query(({ ctx }) => getCumulativeIndicatorStats(ctx.user.id)),
+
+  /** 시장 국면 분석 — 현재 상승/하락/전환 판단 + 국면별 전략 가이드 */
+  marketRegime: protectedProcedure.query(() => analyzeMarketRegime()),
 });

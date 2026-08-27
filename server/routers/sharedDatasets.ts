@@ -119,7 +119,7 @@ export const sharedDatasetsRouter = router({
     const dailyContextBars = (dailyContextRows as Array<typeof researchDailyBars.$inferSelect>).map(row => ({ date: row.date, open: row.open, high: row.high, low: row.low, close: row.close, volume: Number(row.volume), turnover: Number(row.turnover) }));
     const conditionContextAtIndex = input.timeframe === "five_minute" ? createFiveMinuteContextProvider(bars, dailyContextBars) : undefined;
     const assumptions = { timeframe: input.timeframe, minScore: input.minScore, holdingBars: input.holdingBars, feeRate: input.feeRate, slippageBps: input.slippageBps, informationCutoffBars: 1, datasetVersionKey: dataset.versionKey, sourceFingerprint: dataset.sourceFingerprint };
-    const result = runDailyBacktest({ bars, rules: rulesSchema.parse(preset.rulesJson) as ConditionRule[], minScore: input.minScore, holdingDays: input.holdingBars, feeRate: input.feeRate + input.slippageBps / 10_000, entryDelayDays: 1, entryTiming: "open", conditionContextAtIndex });
+    const result = runDailyBacktest({ bars, rules: rulesSchema.parse(preset.rulesJson) as ConditionRule[], minScore: input.minScore, holdingDays: input.holdingBars, feeRate: input.feeRate + input.slippageBps / 10_000, entryDelayDays: 1, entryTiming: "open", maxOpenGapPercent: 3, stopLossPercent: 3, takeProfitPercent: 5, conditionContextAtIndex });
     const [stored] = await db.insert(sharedDatasetBacktests).values({ userId: ctx.user.id, datasetId: dataset.id, presetId: preset.id, timeframe: input.timeframe, symbol: input.symbol, assumptionsJson: assumptions, resultsJson: result }).returning();
     return { backtestId: stored.id, datasetId: dataset.id, datasetVersionKey: dataset.versionKey, sourceFingerprint: dataset.sourceFingerprint, symbol: input.symbol, timeframe: input.timeframe, assumptions, result };
   }),
@@ -151,7 +151,7 @@ export const sharedDatasetsRouter = router({
         if (bars.length < 60) { skippedSymbols.push(symbol); continue; }
         const dailyContextBars = (dailyContextRows as Array<typeof researchDailyBars.$inferSelect>).map(row => ({ date: row.date, open: row.open, high: row.high, low: row.low, close: row.close, volume: Number(row.volume), turnover: Number(row.turnover) }));
         const conditionContextAtIndex = input.timeframe === "five_minute" ? createFiveMinuteContextProvider(bars, dailyContextBars) : undefined;
-        const result = runDailyBacktest({ bars, rules, minScore: input.minScore, holdingDays: input.holdingBars, feeRate: input.feeRate + input.slippageBps / 10_000, entryDelayDays: 1, entryTiming: "open", conditionContextAtIndex });
+        const result = runDailyBacktest({ bars, rules, minScore: input.minScore, holdingDays: input.holdingBars, feeRate: input.feeRate + input.slippageBps / 10_000, entryDelayDays: 1, entryTiming: "open", maxOpenGapPercent: 3, stopLossPercent: 3, takeProfitPercent: 5, conditionContextAtIndex });
         symbolResults.push({ symbol, totalReturn: result.totalReturn, winRate: result.winRate, tradeCount: result.tradeCount, maxDrawdown: result.maxDrawdown, tradeSamples: result.trades.slice(-5) });
       }
       const evaluatedSymbolCount = symbolResults.length;

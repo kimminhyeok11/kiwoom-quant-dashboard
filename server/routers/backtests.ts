@@ -37,7 +37,7 @@ export const backtestsRouter = router({
     const preset = (await db.select().from(strategyPresets).where(and(eq(strategyPresets.id, input.presetId), eq(strategyPresets.userId, ctx.user.id))).limit(1))[0];
     if (!preset) throw new TRPCError({ code: "NOT_FOUND", message: "백테스트할 프리셋을 찾을 수 없습니다." });
     const rules = z.array(ruleSchema).parse(preset.rulesJson) as ConditionRule[];
-    const result = runDailyBacktest({ bars: input.bars as DailyBar[], rules, minScore: input.minScore, holdingDays: input.holdingDays, feeRate: input.feeRate });
+    const result = runDailyBacktest({ bars: input.bars as DailyBar[], rules, minScore: input.minScore, holdingDays: input.holdingDays, feeRate: input.feeRate, entryDelayDays: 1, entryTiming: "open", maxOpenGapPercent: 3, stopLossPercent: 3, takeProfitPercent: 5 });
     const [created] = await db.insert(backtestRuns).values({
       userId: ctx.user.id, presetId: preset.id, status: "completed", startDate: input.bars[0].date, endDate: input.bars.at(-1)?.date ?? input.bars[0].date,
       initialCapital: input.initialCapital, totalReturn: result.totalReturn.toFixed(3), winRate: result.winRate.toFixed(2), tradeCount: result.tradeCount,

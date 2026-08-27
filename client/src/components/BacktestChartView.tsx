@@ -20,6 +20,7 @@ type Trade = {
   entryPrice: number;
   exitPrice: number;
   returnPercent: number;
+  exitReason?: string;
 };
 
 type BacktestChartViewProps = {
@@ -205,6 +206,7 @@ export function BacktestChartView({ symbol, trades, strategyLabel }: BacktestCha
                   <th className="px-3 py-1.5 text-right">청산가</th>
                   <th className="px-3 py-1.5 text-right">수익률</th>
                   <th className="px-3 py-1.5 text-right">보유일</th>
+                  <th className="px-3 py-1.5">청산 사유</th>
                 </tr>
               </thead>
               <tbody>
@@ -220,6 +222,17 @@ export function BacktestChartView({ symbol, trades, strategyLabel }: BacktestCha
                         {t.returnPercent >= 0 ? "+" : ""}{t.returnPercent.toFixed(2)}%
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono text-slate-500">{holdingDays}일</td>
+                      <td className="px-3 py-1.5">
+                        {t.exitReason && (
+                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                            t.exitReason === "stop_loss" ? "bg-rose-500/10 text-rose-300"
+                            : t.exitReason === "take_profit" ? "bg-emerald-500/10 text-emerald-300"
+                            : "bg-slate-500/10 text-slate-400"
+                          }`}>
+                            {t.exitReason === "stop_loss" ? "손절" : t.exitReason === "take_profit" ? "익절" : "만기"}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

@@ -382,6 +382,9 @@ export const conditionBuilderRouter = router({
           feeRate,
           entryDelayDays: 1,
           entryTiming: "open",
+          maxOpenGapPercent: 3,
+          stopLossPercent: 3,
+          takeProfitPercent: 5,
         });
 
         symbolResults.push({

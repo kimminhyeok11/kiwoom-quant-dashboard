@@ -21,6 +21,37 @@ import type { ConditionExpressionGroup, ConditionRule } from "../../shared/tradi
 import { evaluateExpression } from "../quant/conditions";
 import type { DailyBar } from "../quant/conditions";
 
+/** 일봉 → 주봉/월봉 변환 */
+function aggregateDailyBars(bars: DailyBar[], timeframe: "daily" | "weekly" | "monthly"): DailyBar[] {
+  if (timeframe === "daily") return bars;
+  const grouped = new Map<string, DailyBar>();
+  for (const bar of bars) {
+    const d = new Date(bar.date);
+    let key: string;
+    if (timeframe === "weekly") {
+      // ISO week: Monday start
+      const dayOfWeek = d.getDay() || 7;
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - dayOfWeek + 1);
+      key = monday.toISOString().slice(0, 10);
+    } else {
+      // Monthly: first of month
+      key = bar.date.slice(0, 7) + "-01";
+    }
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { ...bar, date: key });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
+      existing.close = bar.close;
+      existing.volume += bar.volume;
+      existing.turnover += bar.turnover;
+    }
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 const ALL_RULE_TYPES: ConditionRule["type"][] = [
   "macd_rising", "ma_position", "high_return", "turnover",
   "rsi", "bollinger", "stochastic", "atr_percent",
@@ -47,7 +78,11 @@ export const oneClickBacktestRouter = router({
       /** 최소 점수 */
       minScore: z.number().min(0).max(100).default(50),
       /** 타임프레임 */
-      timeframe: z.enum(["daily", "minute"]).default("daily"),
+      timeframe: z.enum(["daily", "weekly", "monthly"]).default("daily"),
+      /** 손절 비율 (%) */
+      stopLossPercent: z.number().min(0).max(20).default(3),
+      /** 익절 비율 (%) */
+      takeProfitPercent: z.number().min(0).max(50).default(5),
     }).optional())
     .mutation(async ({ input }) => {
       const count = input?.count ?? 10;
@@ -56,6 +91,8 @@ export const oneClickBacktestRouter = router({
       const holdingDays = input?.holdingDays ?? 5;
       const feeRate = (input?.feeRate ?? 0.0003) + (input?.slippageBps ?? 8) / 10000;
       const minScore = input?.minScore ?? 50;
+      const stopLossPercent = input?.stopLossPercent ?? 3;
+      const takeProfitPercent = input?.takeProfitPercent ?? 5;
 
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB 연결 불가" });
@@ -121,6 +158,24 @@ export const oneClickBacktestRouter = router({
         });
       }
 
+      // 타임프레임 변환 (주봉/월봉)
+      const timeframe = input?.timeframe ?? "daily";
+      const minBarsRequired = timeframe === "monthly" ? 12 : timeframe === "weekly" ? 20 : 60;
+      const convertedBarsBySymbol: Record<string, DailyBar[]> = {};
+      for (const symbol of eligibleSymbols) {
+        const converted = aggregateDailyBars(barsBySymbol[symbol], timeframe);
+        if (converted.length >= minBarsRequired) {
+          convertedBarsBySymbol[symbol] = converted;
+        }
+      }
+      const finalSymbols = Object.keys(convertedBarsBySymbol);
+      if (!finalSymbols.length) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `${timeframe === "weekly" ? "주봉" : timeframe === "monthly" ? "월봉" : "일봉"} 기준 충분한 데이터가 있는 종목이 없습니다.`,
+        });
+      }
+
       // 3. 랜덤 조건식 생성
       const spec: EvolutionGenerationSpec = {
         seed,
@@ -150,10 +205,11 @@ export const oneClickBacktestRouter = router({
       for (const genome of genomes) {
         const symbolResults: Array<{ symbol: string; result: BacktestResult }> = [];
 
-        for (const symbol of eligibleSymbols) {
-          const bars = barsBySymbol[symbol];
-          // 랜덤 기간 선택 (최소 60봉, 최대 전체)
-          const maxStart = Math.max(0, bars.length - 60);
+        for (const symbol of finalSymbols) {
+          const bars = convertedBarsBySymbol[symbol];
+          // 랜덤 기간 선택
+          const minBars = minBarsRequired;
+          const maxStart = Math.max(0, bars.length - minBars);
           const startIndex = Math.floor(Math.random() * maxStart);
           const slicedBars = bars.slice(startIndex);
 
@@ -165,6 +221,9 @@ export const oneClickBacktestRouter = router({
             feeRate,
             entryDelayDays: 1,
             entryTiming: "open",
+            maxOpenGapPercent: 3,
+            stopLossPercent,
+            takeProfitPercent,
           });
 
           symbolResults.push({ symbol, result });
@@ -197,8 +256,8 @@ export const oneClickBacktestRouter = router({
 
       return {
         timestamp: new Date().toISOString(),
-        config: { count, minRules, maxRules, holdingDays, feeRate, minScore },
-        symbols: eligibleSymbols,
+        config: { count, minRules, maxRules, holdingDays, feeRate, minScore, stopLossPercent, takeProfitPercent },
+        symbols: finalSymbols,
         results: results.map((r, rank) => ({
           rank: rank + 1,
           fingerprint: r.genome.fingerprint,
@@ -215,6 +274,10 @@ export const oneClickBacktestRouter = router({
             winRate: Number(sr.result.winRate.toFixed(1)),
             tradeCount: sr.result.tradeCount,
             maxDrawdown: Number(sr.result.maxDrawdown.toFixed(2)),
+            stopLossCount: sr.result.stopLossCount,
+            takeProfitCount: sr.result.takeProfitCount,
+            timeExitCount: sr.result.timeExitCount,
+            avgHoldingDays: Number(sr.result.avgHoldingDays.toFixed(1)),
             trades: sr.result.trades.slice(-10), // 최근 10건만
           })),
         })),
@@ -269,6 +332,8 @@ export const oneClickBacktestRouter = router({
       feeRate: z.number().min(0).max(0.01).default(0.0003),
       slippageBps: z.number().min(0).max(100).default(8),
       minScore: z.number().min(0).max(100).default(50),
+      stopLossPercent: z.number().min(0).max(20).default(3),
+      takeProfitPercent: z.number().min(0).max(50).default(5),
     }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -336,6 +401,9 @@ export const oneClickBacktestRouter = router({
             feeRate,
             entryDelayDays: 1,
             entryTiming: "open",
+            maxOpenGapPercent: 3,
+            stopLossPercent: input.stopLossPercent,
+            takeProfitPercent: input.takeProfitPercent,
           });
           symbolResults.push({ symbol, result });
         }
@@ -354,7 +422,7 @@ export const oneClickBacktestRouter = router({
       const parentResults: Array<{ symbol: string; result: BacktestResult }> = [];
       for (const symbol of eligibleSymbols) {
         const bars = barsBySymbol[symbol];
-        const result = runDailyBacktest({ bars, expression: input.parentRoot as unknown as ConditionExpressionGroup, minScore: input.minScore, holdingDays: input.holdingDays, feeRate, entryDelayDays: 1, entryTiming: "open" });
+        const result = runDailyBacktest({ bars, expression: input.parentRoot as unknown as ConditionExpressionGroup, minScore: input.minScore, holdingDays: input.holdingDays, feeRate, entryDelayDays: 1, entryTiming: "open", maxOpenGapPercent: 3, stopLossPercent: input.stopLossPercent, takeProfitPercent: input.takeProfitPercent });
         parentResults.push({ symbol, result });
       }
       const parentAvgReturn = parentResults.reduce((s, r) => s + r.result.totalReturn, 0) / parentResults.length;

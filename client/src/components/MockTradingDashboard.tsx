@@ -9,10 +9,13 @@
  */
 
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { Activity, ArrowDownRight, ArrowUpRight, ShieldCheck, TrendingUp, Wallet } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, ShieldCheck, TrendingUp, Wallet } from "lucide-react";
+import { LiveTradingMonitor } from "./LiveTradingMonitor";
 
 export function MockTradingDashboard() {
+  const [, setLocation] = useLocation();
   const positions = trpc.mockTrading.positions.useQuery(undefined, { refetchInterval: 30000 });
   const recentOrders = trpc.mockTrading.recentOrders.useQuery(undefined, { refetchInterval: 30000 });
   const policy = trpc.mockTrading.activePolicy.useQuery(undefined, { staleTime: 60000 });
@@ -25,17 +28,29 @@ export function MockTradingDashboard() {
   return (
     <div className="flex flex-col gap-5 p-4">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-white">모의투자 현황</h1>
-        <p className="mt-1 text-xs text-slate-400">
-          키움 모의투자 API(mockapi.kiwoom.com)로 자동 주문 → 체결 → 잔고를 실시간 동기화합니다.
-          {positions.data?.lastUpdated && (
-            <span className="ml-2 text-slate-500">
-              마지막 동기화: {new Date(positions.data.lastUpdated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
-            </span>
-          )}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-white">모의투자 포트폴리오</h1>
+          <p className="mt-1 text-xs text-slate-400">
+            검증된 전략이 키움 모의투자 계좌에서 자동으로 매매됩니다. 진입 방식: 전일 종가 확정 → 다음날 시가 매수.
+            {positions.data?.lastUpdated && (
+              <span className="ml-2 text-slate-500">
+                마지막 동기화: {new Date(positions.data.lastUpdated).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => setLocation("/execute/performance")}
+          className="flex items-center gap-1.5 rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs font-medium text-teal-300 transition hover:bg-teal-500/10"
+        >
+          <BarChart3 size={14} />
+          성과 리포트
+        </button>
       </div>
+
+      {/* Live Trading Monitor */}
+      <LiveTradingMonitor />
 
       {/* Summary cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -64,10 +79,46 @@ export function MockTradingDashboard() {
           icon={ShieldCheck}
           label="자동매매 정책"
           value={policy.data ? `${policy.data.totalCapital.toLocaleString()}원` : "미설정"}
-          detail={policy.data ? `최대 ${policy.data.maxConcurrentPositions}종목 · 손절 ${policy.data.stopLossPercent}% · 익절 ${policy.data.takeProfitPercent}%` : "정책을 설정하세요"}
+          detail={policy.data ? `최대 ${policy.data.maxConcurrentPositions}종목 · 손절 ${policy.data.stopLossPercent}% · 익절 ${policy.data.takeProfitPercent}% · ${policy.data.entryTiming === "prev_close_next_open" ? "종가확정→시가매수" : "실시간진입"} · 갭 ±${policy.data.maxOpenGapPercent ?? 3}% 방어 · ${policy.data.positionSizingMode === "half_kelly" ? "Half Kelly" : policy.data.positionSizingMode === "kelly" ? "Full Kelly" : policy.data.positionSizingMode === "quarter_kelly" ? "Quarter Kelly" : `고정 ${policy.data.positionSizingFixedPercent ?? 10}%`}` : "정책을 설정하세요"}
           tone="violet"
         />
       </div>
+
+      {/* Policy Setup Guide - when no active policy */}
+      {!policy.data && !policy.isLoading && (
+        <section className="rounded-xl border border-amber-500/20 bg-gradient-to-br from-amber-950/20 to-slate-950/30 p-5">
+          <div className="flex items-start gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+              <ShieldCheck size={20} className="text-amber-400" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-amber-300">자동매매 정책 미설정</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                자동매매를 시작하려면 정책을 먼저 설정하세요. 정책은 총 자본금, 최대 동시 보유 종목 수, 
+                손절/익절 비율을 정의합니다. 수집기가 이 정책에 따라 자동으로 주문을 실행합니다.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                  <p className="text-[10px] text-slate-500">권장 자본금</p>
+                  <p className="font-mono text-xs font-medium text-white">10,000,000원</p>
+                </div>
+                <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                  <p className="text-[10px] text-slate-500">동시 보유</p>
+                  <p className="font-mono text-xs font-medium text-white">최대 5종목</p>
+                </div>
+                <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                  <p className="text-[10px] text-slate-500">리스크 관리</p>
+                  <p className="font-mono text-xs font-medium text-white">손절 3% · 익절 5%</p>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-slate-500">
+                정책은 대시보드의 프로필 설정에서 생성할 수 있습니다. 
+                정책이 활성화되면 수집기(mock-trader.mjs)가 자동으로 주문 계획을 수신합니다.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Positions */}
       <section>
