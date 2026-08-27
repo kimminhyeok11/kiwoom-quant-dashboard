@@ -136,38 +136,65 @@ export function StrategyCompare() {
       {/* Comparison table */}
       {selectedStrategies.length >= 2 && (
         <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-4 sm:p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <Scale size={16} className="text-teal-400" />
-            <h2 className="text-sm font-bold text-white">비교 결과</h2>
-            <span className="text-[10px] text-slate-500">{selectedStrategies.length}개 전략</span>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Scale size={16} className="text-teal-400" />
+              <h2 className="text-sm font-bold text-white">비교 결과</h2>
+              <span className="text-[10px] text-slate-500">{selectedStrategies.length}개 전략</span>
+            </div>
+            <button
+              onClick={() => { selectedStrategies.forEach(s => runValidation(s)); }}
+              disabled={validateMutation.isPending}
+              className="flex items-center gap-1.5 rounded-lg bg-teal-500 px-4 py-2 text-xs font-bold text-white hover:bg-teal-600 active:scale-95 disabled:opacity-50"
+            >
+              <Zap size={13} className={validateMutation.isPending ? "animate-pulse" : ""} />
+              {validateMutation.isPending ? "검증 중..." : "전체 랜덤 검증 실행"}
+            </button>
           </div>
 
-          {/* Run validations */}
-          <div className="mb-4 flex flex-wrap gap-2">
-            {selectedStrategies.map(s => (
-              <button
-                key={s.id}
-                onClick={() => runValidation(s)}
-                disabled={validating === s.id || validateMutation.isPending}
-                className="flex items-center gap-1 rounded-lg bg-violet-500/10 px-3 py-1.5 text-[11px] font-medium text-violet-300 hover:bg-violet-500/20 active:scale-95 disabled:opacity-50"
-              >
-                <Zap size={11} className={validating === s.id ? "animate-pulse" : ""} />
-                {validating === s.id ? "검증 중..." : `"${s.name.slice(0, 10)}" 랜덤 검증`}
-              </button>
-            ))}
-          </div>
-
-          {/* Comparison grid */}
-          <div className="overflow-x-auto">
+          {/* 기본 정보 (즉시 표시) */}
+          <div className="mb-4 overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-slate-500">
-                  <th className="px-3 py-2">지표</th>
+                  <th className="px-3 py-2">전략</th>
                   {selectedStrategies.map(s => (
-                    <th key={s.id} className="px-3 py-2 text-center">{s.name.slice(0, 15)}</th>
+                    <th key={s.id} className="px-3 py-2 text-center text-white">{s.name.slice(0, 12)}</th>
                   ))}
                 </tr>
               </thead>
+              <tbody>
+                <tr className="border-b border-slate-800/50">
+                  <td className="px-3 py-2 text-slate-400">생성일</td>
+                  {selectedStrategies.map(s => (
+                    <td key={s.id} className="px-3 py-2 text-center text-slate-300">{new Date(s.createdAt).toLocaleDateString("ko-KR")}</td>
+                  ))}
+                </tr>
+                <tr className="border-b border-slate-800/50">
+                  <td className="px-3 py-2 text-slate-400">상태</td>
+                  {selectedStrategies.map(s => {
+                    const scoring = s.scoringJson as { lifecycleStatus?: string } | null;
+                    const st = scoring?.lifecycleStatus ?? "candidate";
+                    return <td key={s.id} className="px-3 py-2 text-center"><span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${STATUS_LABELS[st]?.color ?? "text-slate-400"}`}>{STATUS_LABELS[st]?.label ?? "후보"}</span></td>;
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* 랜덤 검증 결과 (실행 후 표시) */}
+          {validationResults.size > 0 && (
+            <div className="overflow-x-auto">
+              <h3 className="mb-2 text-xs font-medium text-slate-400">랜덤 기간 검증 결과 (50회 반복)</h3>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 text-left text-slate-500">
+                    <th className="px-3 py-2">지표</th>
+                    {selectedStrategies.map(s => (
+                      <th key={s.id} className="px-3 py-2 text-center">{s.name.slice(0, 12)}</th>
+                    ))}
+                  </tr>
+                </thead>
               <tbody>
                 <CompareRow label="평균 수익률" values={selectedStrategies.map(s => {
                   const v = validationResults.get(s.id);
@@ -212,10 +239,11 @@ export function StrategyCompare() {
               </tbody>
             </table>
           </div>
+          )}
 
           {validationResults.size === 0 && (
             <p className="mt-3 text-[10px] text-slate-500 text-center">
-              위 버튼으로 각 전략의 랜덤 기간 검증을 실행하면 비교 지표가 채워집니다.
+              "전체 랜덤 검증 실행" 버튼을 누르면 각 전략을 50회 반복 테스트하여 비교 지표가 채워집니다.
             </p>
           )}
         </section>
